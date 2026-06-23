@@ -1,0 +1,27 @@
+name: rag-eval-gate
+on: pull_request
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    services:
+      qdrant:
+        image: qdrant/qdrant:latest
+        ports:
+          - 6333:6333
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[eval,dev]"
+      - name: Run tests
+        run: pytest -q
+      - name: Build index from corpus
+        run: python -m observable_rag.index.build
+      - name: Run eval harness
+        run: python eval/evaluate.py --golden data/eval/golden_set.jsonl --out eval_report.json
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      - name: Gate on regression vs baseline
+        run: python eval/ci_gate.py --baseline data/eval/baseline.json --current eval_report.json

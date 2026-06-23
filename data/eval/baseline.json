@@ -1,0 +1,19 @@
+{
+  "retrieval": {
+    "recall_at_5": null,
+    "context_precision_at_5": null,
+    "mrr": null
+  },
+  "generation": {
+    "faithfulness": null,
+    "answer_relevance": null
+  },
+  "robustness": {
+    "false_answer_rate": null,
+    "over_abstain_rate": null
+  },
+  "latency_ms": {
+    "p50": null,
+    "p95": null
+  }
+}

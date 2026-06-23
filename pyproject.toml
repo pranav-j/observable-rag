@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "observable-rag"
+version = "0.1.0"
+description = "Observable RAG: hybrid retrieval, citation-enforced answers, CI-gated evaluation."
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "pydantic",
+  "pydantic-settings",
+  "pyyaml",
+  "httpx",
+  "qdrant-client",
+  "rank-bm25",
+  "sentence-transformers",
+  "openai",
+  "arize-phoenix",
+]
+
+[project.optional-dependencies]
+eval = ["ragas", "datasets"]
+dev = ["pytest", "ruff"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/observable_rag"]
+
+[tool.ruff]
+line-length = 100
