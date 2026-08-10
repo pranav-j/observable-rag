@@ -51,7 +51,7 @@ Generate the first real baseline once the pipeline works:
 
 ## Status / roadmap
 - [x] Scaffold: structure, eval harness, CI gate, RRF fusion, FastAPI app shell
-- [ ] Phase 1 — ingestion + chunking (stable chunk ids)
+- [x] Phase 1 — ingestion + chunking (stable chunk ids)
 - [ ] Phase 2 — vector + BM25 indexes, hybrid fusion, cross-encoder rerank
 - [ ] Phase 3 — citation-enforcing generation + the /ask endpoint
 - [ ] Phase 4 — Phoenix tracing + retrieval-quality logging

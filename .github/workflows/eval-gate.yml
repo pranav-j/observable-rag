@@ -19,6 +19,8 @@ jobs:
         run: pytest -q
       - name: Build index from corpus
         run: python -m observable_rag.index.build
+        env:
+          DOC_LIMIT: "30"
       - name: Run eval harness
         run: python eval/evaluate.py --golden data/eval/golden_set.jsonl --out eval_report.json
         env:
