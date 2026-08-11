@@ -12,3 +12,4 @@ data/corpus/*
 !data/corpus/.gitkeep
 eval_report.json
 .phoenix/
+data/index/
