@@ -1,12 +1,9 @@
 """Phase 2: hybrid retrieval -- fuse dense + BM25 with RRF, then rerank.
 
 Two stages: hybrid_search casts a wide, recall-oriented net (dense + lexical,
-combined by RANK not score), then the cross-encoder reranker does the precise,
-expensive reordering on just those candidates. Recall first, precision second.
-
-reciprocal_rank_fusion + hybrid_search are already implemented -- read them; RRF
-fuses by rank because dense (cosine) and BM25 scores live on incomparable scales.
-Your job is retrieve(): wire the two stages together.
+combined by RANK not score, since cosine and BM25 scores are incomparable), then
+retrieve() rescores those candidates with the cross-encoder and keeps the best
+few. Recall first, precision second.
 """
 
 from __future__ import annotations
@@ -34,9 +31,8 @@ def hybrid_search(query: str, top_k_each: int = 20, rrf_k: int = 60) -> list[str
 def retrieve(query: str, top_k_each: int = 20, rrf_k: int = 60, top_n: int = 5,
              store: "dict[str, Chunk] | None" = None,
              reranker: "CrossEncoderReranker | None" = None) -> list[Chunk]:
-    """YOUR IMPLEMENTATION -- the two-stage pipeline:
-      1. recall:  ids = hybrid_search(query, top_k_each, rrf_k)
-      2. resolve: turn ids into Chunks using `store` (default load_chunks())
-      3. precision: rerank with `reranker` (default CrossEncoderReranker()); return top_n
-    """
-    raise NotImplementedError("wire hybrid_search -> resolve via store -> rerank -> top_n")
+    ids = hybrid_search(query, top_k_each=top_k_each, rrf_k=rrf_k)
+    store = load_chunks() if store is None else store
+    candidates = [store[cid] for cid in ids if cid in store]
+    reranker = reranker or CrossEncoderReranker()
+    return reranker.rerank(query, candidates, top_n)
