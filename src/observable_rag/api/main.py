@@ -5,7 +5,17 @@ from __future__ import annotations
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from ..generate.answer import RagPipeline
+
 app = FastAPI(title="observable-rag")
+_pipeline: "RagPipeline | None" = None
+
+
+def get_pipeline() -> RagPipeline:
+    global _pipeline
+    if _pipeline is None:
+        _pipeline = RagPipeline()
+    return _pipeline
 
 
 class AskRequest(BaseModel):
@@ -25,5 +35,5 @@ def health() -> dict:
 
 @app.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest) -> AskResponse:
-    # TODO phase 3: call RagPipeline().answer(req.question) and map the result.
-    raise NotImplementedError("phase 3: wire RagPipeline into /ask")
+    out = get_pipeline().answer(req.question)
+    return AskResponse(answer=out.answer, citations=out.citations, abstained=out.abstained)
