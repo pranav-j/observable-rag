@@ -24,6 +24,7 @@ jobs:
       - name: Run eval harness
         run: python eval/evaluate.py --golden data/eval/golden_set.jsonl --out eval_report.json
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_PROVIDER: gemini
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       - name: Gate on regression vs baseline
         run: python eval/ci_gate.py --baseline data/eval/baseline.json --current eval_report.json
