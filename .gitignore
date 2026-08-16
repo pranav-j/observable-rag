@@ -13,3 +13,4 @@ data/corpus/*
 eval_report.json
 .phoenix/
 data/index/
+data/eval/golden_candidates.jsonl
