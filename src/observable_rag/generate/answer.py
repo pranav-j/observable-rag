@@ -2,15 +2,15 @@
 
 retrieve() supplies the reranked chunks; we show them to the LLM tagged with
 their ids, force inline [id] citations and an exact abstain phrase, then parse
-the answer. Grounding is enforced by construction (only these sources, cite
-them, abstain otherwise) -- imperfect on its own, which is why the faithfulness
-metric and tracing exist.
+the answer. Grounding is enforced by construction (only these sources, cite them,
+abstain otherwise) -- imperfect on its own, which is why the faithfulness metric
+and tracing exist.
 
-The LLM client is injectable and provider-agnostic: _load_default_llm() picks
-OpenAI or Gemini from the LLM_PROVIDER env var (default "gemini"). Gemini is
-reached via its OpenAI-compatible endpoint, so one chat-completions call serves
-both and no extra dependency is needed. Retrieval, reranking, and embeddings are
-local, so on Gemini's free Flash tier the whole system runs at zero cost.
+The LLM client is injectable and provider-agnostic. LLM_PROVIDER (default
+"gemini") selects openai / gemini / groq; each is reached through an
+OpenAI-compatible endpoint, so one code path serves all three. Model names are
+env-configurable (OPENAI_MODEL / GEMINI_MODEL / GROQ_MODEL) because providers
+deprecate models aggressively -- config, not code, absorbs the churn.
 """
 
 from __future__ import annotations
@@ -24,9 +24,11 @@ from ..ingest.chunk import Chunk
 from ..retrieve.hybrid import retrieve as hybrid_retrieve
 from .prompt import ABSTAIN_MESSAGE, build_messages
 
-OPENAI_MODEL = "gpt-4o-mini"
-GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_GEMINI_MODEL = "gemini-3.7-flash"
+DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 _CITE = re.compile(r"\[([^\]\s]+#\d+)\]")
 
 
@@ -59,22 +61,31 @@ def _chat_completer(client, model: str):
 
 def _load_openai_llm():
     from openai import OpenAI
-    return _chat_completer(OpenAI(), OPENAI_MODEL)
+    return _chat_completer(OpenAI(), os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL))
 
 
 def _load_gemini_llm():
     from openai import OpenAI  # Gemini via its OpenAI-compatible endpoint
     client = OpenAI(api_key=os.environ.get("GEMINI_API_KEY"), base_url=GEMINI_BASE_URL)
-    return _chat_completer(client, GEMINI_MODEL)
+    return _chat_completer(client, os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL))
+
+
+def _load_groq_llm():
+    from openai import OpenAI  # Groq via its OpenAI-compatible endpoint
+    client = OpenAI(api_key=os.environ.get("GROQ_API_KEY"), base_url=GROQ_BASE_URL)
+    return _chat_completer(client, os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL))
 
 
 def _load_default_llm():
+    loaders = {
+        "openai": _load_openai_llm,
+        "gemini": _load_gemini_llm,
+        "groq": _load_groq_llm,
+    }
     provider = os.getenv("LLM_PROVIDER", "gemini").lower()
-    if provider == "gemini":
-        return _load_gemini_llm()
-    if provider == "openai":
-        return _load_openai_llm()
-    raise ValueError(f"unknown LLM_PROVIDER: {provider!r} (use 'gemini' or 'openai')")
+    if provider not in loaders:
+        raise ValueError(f"unknown LLM_PROVIDER: {provider!r} (use openai, gemini, or groq)")
+    return loaders[provider]()
 
 
 class RagPipeline:

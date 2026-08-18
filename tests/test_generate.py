@@ -53,7 +53,8 @@ def test_abstains_when_model_emits_abstain_phrase():
 def test_llm_provider_switch(monkeypatch):
     monkeypatch.setattr(ans, "_load_openai_llm", lambda: "openai-llm")
     monkeypatch.setattr(ans, "_load_gemini_llm", lambda: "gemini-llm")
-    monkeypatch.setenv("LLM_PROVIDER", "gemini")
-    assert ans._load_default_llm() == "gemini-llm"
-    monkeypatch.setenv("LLM_PROVIDER", "openai")
-    assert ans._load_default_llm() == "openai-llm"
+    monkeypatch.setattr(ans, "_load_groq_llm", lambda: "groq-llm")
+    for provider, expected in [("gemini", "gemini-llm"), ("openai", "openai-llm"),
+                               ("groq", "groq-llm")]:
+        monkeypatch.setenv("LLM_PROVIDER", provider)
+        assert ans._load_default_llm() == expected
