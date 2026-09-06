@@ -25,7 +25,7 @@ from ..retrieve.hybrid import retrieve as hybrid_retrieve
 from .prompt import ABSTAIN_MESSAGE, build_messages
 
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
-DEFAULT_GEMINI_MODEL = "gemini-3.7-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3-flash"
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
@@ -51,11 +51,28 @@ def _parse_citations(answer: str, valid: set[str]) -> list[str]:
 
 
 def _chat_completer(client, model: str):
-    """Wrap an OpenAI-style client into complete(messages) -> str (temperature 0)."""
+    """Wrap an OpenAI-style client into complete(messages) -> str.
+
+    Prefer temperature=0 for reproducible eval, but some newer models reject any
+    non-default temperature -- so on that specific error, retry without it and
+    remember, instead of failing (or paying for repeated rejected calls).
+    """
+    supports_temperature = {"ok": True}
+
     def complete(messages: list[dict]) -> str:
-        resp = client.chat.completions.create(
-            model=model, messages=messages, temperature=0)
+        kwargs = {"model": model, "messages": messages}
+        if supports_temperature["ok"]:
+            kwargs["temperature"] = 0
+        try:
+            resp = client.chat.completions.create(**kwargs)
+        except Exception as e:  # noqa: BLE001
+            if supports_temperature["ok"] and "temperature" in str(e).lower():
+                supports_temperature["ok"] = False
+                resp = client.chat.completions.create(model=model, messages=messages)
+            else:
+                raise
         return resp.choices[0].message.content or ""
+
     return complete
 
 

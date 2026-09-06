@@ -1,29 +1,24 @@
 """Phase 2b: cross-encoder reranking -- the precision stage.
 
-The bi-encoder in vector.py encodes query and chunk SEPARATELY, which is what
-makes first-stage retrieval fast (chunk vectors are precomputed). A cross-encoder
-instead feeds each (query, chunk) pair through the model TOGETHER, so it can judge
-how well a chunk answers this specific query -- much more accurate, but
-O(candidates) and impossible to precompute, so it runs only on the small fused
-candidate set.
+The bi-encoder in vector.py encodes query and chunk SEPARATELY (fast, precomputed).
+A cross-encoder feeds each (query, chunk) pair through the model TOGETHER -- far
+more accurate, but O(candidates), so it runs only on the small fused candidate set.
 
-The scorer is injectable (the default lazily loads the model), so the ranking
-logic is testable without downloading anything.
+The scorer is injectable (default lazily loads the model), so the ranking logic is
+testable without downloading anything. The model name is env-configurable
+(RERANK_MODEL) because model repos get renamed/reformatted -- config absorbs churn.
 """
 
 from __future__ import annotations
 
+import os
+
 from ..ingest.chunk import Chunk
 
-RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+RERANK_MODEL = os.getenv("RERANK_MODEL", "cross-encoder/ms-marco-MiniLM-L6-v2")
 
 
 def _load_default_scorer():
-    """Return score(query, texts) -> list[float], backed by a CrossEncoder.
-
-    The model loads once (outer call); the returned closure scores each
-    (query, text) pair on every call. Higher score = more relevant.
-    """
     from sentence_transformers import CrossEncoder
 
     model = CrossEncoder(RERANK_MODEL)

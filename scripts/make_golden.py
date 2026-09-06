@@ -5,9 +5,9 @@ chunk answers plus a concise reference answer -- recording that chunk's id as th
 supporting evidence (the retrieval ground truth, free). Also drafts a batch of
 UNANSWERABLE questions so the eval can measure abstention.
 
-Rate limits: free tiers cap requests-per-minute hard (e.g. 5 RPM). So we BATCH
-many excerpts into one request and RETRY on 429 using the server's suggested
-wait, instead of firing one request per chunk and dropping rate-limited rows.
+Rate limits: BATCH many excerpts into one request and RETRY on 429 using the
+server's suggested wait, so a per-minute cap doesn't drop rows. Progress is
+logged per batch so you can see it working.
 
 Output goes to data/eval/golden_candidates.jsonl -- NOT the golden set. LLM drafts
 are noisy, so review, fix, delete weak rows, verify the unanswerable ones truly
@@ -15,8 +15,8 @@ aren't covered, and promote the good rows into data/eval/golden_set.jsonl.
 
     python scripts/make_golden.py --n 60 --unanswerable 15
 
-Uses the provider switch (LLM_PROVIDER, default gemini) and GEMINI_MODEL. Run
-`python -m observable_rag.index.build` first so chunks.jsonl exists.
+Uses the provider switch (LLM_PROVIDER). Run `python -m observable_rag.index.build`
+first so chunks.jsonl exists.
 """
 
 from __future__ import annotations
@@ -35,6 +35,10 @@ from observable_rag.generate.answer import _load_default_llm  # noqa: E402
 from observable_rag.retrieve.store import load_chunks  # noqa: E402
 
 CANDIDATES_PATH = "data/eval/golden_candidates.jsonl"
+
+
+def _log(msg: str) -> None:
+    print(msg, file=sys.stderr, flush=True)
 
 
 def _answerable_messages(items: list[tuple[int, str]]) -> list[dict]:
@@ -57,11 +61,27 @@ def _unanswerable_messages(m: int) -> list[dict]:
         'FastAPI does not have). Return ONLY a JSON array: [{"question": "..."}].')}]
 
 
-def _parse_array(text: str) -> list[dict]:
-    start, end = text.find("["), text.rfind("]")
-    if start == -1 or end == -1:
-        raise ValueError("no JSON array in model response")
-    return json.loads(text[start:end + 1])
+def _parse_objects(text: str) -> list[dict]:
+    """Extract JSON objects one at a time, tolerating prose, code fences, and
+    missing commas between objects. Using the decoder (not a regex) means braces
+    inside string values -- e.g. FastAPI's {item_id} -- don't break parsing."""
+    decoder = json.JSONDecoder()
+    objects: list[dict] = []
+    idx, n = 0, len(text)
+    while idx < n:
+        brace = text.find("{", idx)
+        if brace == -1:
+            break
+        try:
+            obj, end = decoder.raw_decode(text, brace)
+            if isinstance(obj, dict):
+                objects.append(obj)
+            idx = end
+        except json.JSONDecodeError:
+            idx = brace + 1
+    if not objects:
+        raise ValueError("no parseable JSON objects in model response")
+    return objects
 
 
 def _retry_delay(msg: str, default: float) -> float:
@@ -77,8 +97,8 @@ def _call(complete, messages, retries: int, pause: float) -> str:
             msg = str(e)
             if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower():
                 wait = _retry_delay(msg, default=max(pause, 12.0))
-                print(f"  rate-limited; waiting {wait:.0f}s "
-                      f"(attempt {attempt + 1}/{retries})", file=sys.stderr)
+                _log(f"    rate-limited; waiting {wait:.0f}s "
+                     f"(attempt {attempt + 1}/{retries})")
                 time.sleep(wait)
                 continue
             raise
@@ -89,16 +109,19 @@ def generate_candidates(chunks, complete, n=60, n_unanswerable=15, seed=0,
                         batch=8, pause=13.0, retries=6) -> list[dict]:
     rng = random.Random(seed)
     sample = rng.sample(list(chunks), min(n, len(chunks)))
+    total = (len(sample) + batch - 1) // batch
     rows: list[dict] = []
     i = 0
 
-    for start in range(0, len(sample), batch):
+    for b, start in enumerate(range(0, len(sample), batch), start=1):
         group = sample[start:start + batch]
         items = [(local, chunks[cid].text) for local, cid in enumerate(group)]
+        _log(f"  batch {b}/{total} ({len(group)} chunks) -> requesting...")
+        before = len(rows)
         try:
-            arr = _parse_array(_call(complete, _answerable_messages(items), retries, pause))
+            arr = _parse_objects(_call(complete, _answerable_messages(items), retries, pause))
         except Exception as e:  # noqa: BLE001
-            print(f"! skipped batch @ {start}: {e}", file=sys.stderr)
+            _log(f"  ! batch {b} skipped: {e}")
             continue
         for obj in arr:
             local = obj.get("index")
@@ -111,11 +134,13 @@ def generate_candidates(chunks, complete, n=60, n_unanswerable=15, seed=0,
             rows.append({"id": f"gen{i:03d}", "question": q, "answer": a,
                          "relevant_chunk_ids": [group[local]],
                          "answerable": True, "qtype": "factual"})
+        _log(f"    +{len(rows) - before} (total {len(rows)})")
         time.sleep(pause)
 
     if n_unanswerable > 0:
+        _log(f"  drafting {n_unanswerable} unanswerable questions...")
         try:
-            arr = _parse_array(_call(complete, _unanswerable_messages(n_unanswerable),
+            arr = _parse_objects(_call(complete, _unanswerable_messages(n_unanswerable),
                                      retries, pause))
             for obj in arr[:n_unanswerable]:
                 q = str(obj.get("question", "")).strip()
@@ -125,8 +150,9 @@ def generate_candidates(chunks, complete, n=60, n_unanswerable=15, seed=0,
                 rows.append({"id": f"gen{i:03d}", "question": q, "answer": None,
                              "relevant_chunk_ids": [], "answerable": False,
                              "qtype": "unanswerable"})
+            _log(f"    +{n_unanswerable} unanswerable")
         except Exception as e:  # noqa: BLE001
-            print(f"! unanswerable batch failed: {e}", file=sys.stderr)
+            _log(f"  ! unanswerable batch failed: {e}")
 
     return rows
 
@@ -143,6 +169,8 @@ def main() -> None:
     args = ap.parse_args()
 
     chunks = load_chunks(args.chunks)
+    _log(f"loaded {len(chunks)} chunks; drafting {args.n} answerable "
+         f"+ {args.unanswerable} unanswerable (batch={args.batch})...")
     rows = generate_candidates(chunks, _load_default_llm(), n=args.n,
                                n_unanswerable=args.unanswerable, seed=args.seed,
                                batch=args.batch, pause=args.sleep)

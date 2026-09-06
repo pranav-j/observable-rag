@@ -58,3 +58,46 @@ def test_llm_provider_switch(monkeypatch):
                                ("groq", "groq-llm")]:
         monkeypatch.setenv("LLM_PROVIDER", provider)
         assert ans._load_default_llm() == expected
+
+
+class _Msg:
+    def __init__(self, content): self.content = content
+
+
+class _Choice:
+    def __init__(self, content): self.message = _Msg(content)
+
+
+class _Resp:
+    def __init__(self, content): self.choices = [_Choice(content)]
+
+
+class _Completions:
+    def __init__(self): self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        if "temperature" in kwargs:
+            raise RuntimeError(
+                "Unsupported value: 'temperature' does not support 0 with this model")
+        return _Resp("ok")
+
+
+class _Chat:
+    def __init__(self): self.completions = _Completions()
+
+
+class _Client:
+    def __init__(self): self.chat = _Chat()
+
+
+def test_chat_completer_retries_without_temperature_then_caches():
+    client = _Client()
+    complete = ans._chat_completer(client, "temp-locked-model")
+    assert complete([{"role": "user", "content": "hi"}]) == "ok"
+    assert complete([{"role": "user", "content": "again"}]) == "ok"
+    calls = client.chat.completions.calls
+    assert len(calls) == 3                      # 1st: temp attempt + retry; 2nd: no temp
+    assert "temperature" in calls[0]
+    assert "temperature" not in calls[1]
+    assert "temperature" not in calls[2]
