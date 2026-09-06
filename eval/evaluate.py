@@ -239,16 +239,28 @@ def _build_system() -> RagSystem:
         return _StubSystem()
 
 
+def _build_judge():
+    try:
+        from observable_rag.generate.judge import LLMJudge
+        return LLMJudge()
+    except Exception as e:  # noqa: BLE001
+        print(f"! judge unavailable ({e}); skipping LLM-graded metrics")
+        return None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Run the RAG eval harness over the golden set.")
     ap.add_argument("--golden", type=Path, default=Path("data/eval/golden_set.jsonl"))
     ap.add_argument("--out", type=Path, default=Path("eval_report.json"))
     ap.add_argument("--k", type=int, default=5)
+    ap.add_argument("--no-judge", action="store_true",
+                    help="skip the LLM-graded faithfulness / answer-relevance metrics")
     args = ap.parse_args()
 
     items = load_golden(args.golden)
-    report = run_eval(_build_system(), items, k=args.k)
+    judge = None if args.no_judge else _build_judge()
+    report = run_eval(_build_system(), items, k=args.k, judge=judge)
     args.out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
 
