@@ -256,7 +256,12 @@ def main() -> None:
     ap.add_argument("--k", type=int, default=5)
     ap.add_argument("--no-judge", action="store_true",
                     help="skip the LLM-graded faithfulness / answer-relevance metrics")
+    ap.add_argument("--trace", action="store_true",
+                    help="export spans to Phoenix (run `phoenix serve` first)")
     args = ap.parse_args()
+    if args.trace:
+        from observable_rag.observability.tracing import init_tracing
+        init_tracing()
 
     items = load_golden(args.golden)
     judge = None if args.no_judge else _build_judge()

@@ -1,13 +1,23 @@
-"""FastAPI app exposing the RAG pipeline."""
+"""FastAPI app exposing the RAG pipeline (Phase 4: tracing on startup)."""
 
 from __future__ import annotations
+
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from pydantic import BaseModel
 
 from ..generate.answer import RagPipeline
+from ..observability.tracing import init_tracing
 
-app = FastAPI(title="observable-rag")
+
+@asynccontextmanager
+async def lifespan(app: "FastAPI"):
+    init_tracing()  # no-op if Phoenix isn't running
+    yield
+
+
+app = FastAPI(title="observable-rag", lifespan=lifespan)
 _pipeline: "RagPipeline | None" = None
 
 

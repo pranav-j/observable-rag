@@ -1,9 +1,9 @@
-"""Phase 3: the generation pipeline the eval harness scores.
+"""Phase 3: the generation pipeline the eval harness scores (Phase 4: traced).
 
 retrieve() supplies the reranked chunks; we show them to the LLM tagged with their
 ids, force inline [id] citations and an exact abstain phrase, then parse the answer.
-The LLM client lives in llm.py so this module and the judge can share it without an
-import cycle.
+The LLM client lives in llm.py so this module and the judge share it without a
+cycle. answer() is wrapped in spans so Phoenix shows retrieve vs generate.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass, field
 
 from ..ingest.chunk import Chunk
+from ..observability.tracing import span
 from ..retrieve.hybrid import retrieve as hybrid_retrieve
 from .llm import _load_default_llm  # re-exported for scripts/make_golden.py
 from .prompt import ABSTAIN_MESSAGE, build_messages
@@ -51,19 +52,26 @@ class RagPipeline:
         return self._complete
 
     def answer(self, question: str) -> RagOutput:
-        t0 = time.perf_counter()
-        chunks = self._retrieve(question, top_n=self.top_n)
-        if not chunks:
-            return RagOutput(
-                answer=ABSTAIN_MESSAGE, retrieved_chunk_ids=[], contexts=[],
-                abstained=True, latency_ms=(time.perf_counter() - t0) * 1000, citations=[])
-        text = self.complete(build_messages(question, chunks))
-        ids = [c.id for c in chunks]
-        return RagOutput(
-            answer=text,
-            retrieved_chunk_ids=ids,
-            contexts=[c.text for c in chunks],
-            abstained=ABSTAIN_MESSAGE.lower() in text.lower(),
-            latency_ms=(time.perf_counter() - t0) * 1000,
-            citations=_parse_citations(text, set(ids)),
-        )
+        with span("rag_pipeline", **{"input.value": question}) as sp:
+            t0 = time.perf_counter()
+            chunks = self._retrieve(question, top_n=self.top_n)
+            if not chunks:
+                sp.set_attribute("output.abstained", True)
+                return RagOutput(
+                    answer=ABSTAIN_MESSAGE, retrieved_chunk_ids=[], contexts=[],
+                    abstained=True, latency_ms=(time.perf_counter() - t0) * 1000,
+                    citations=[])
+            with span("generate"):
+                text = self.complete(build_messages(question, chunks))
+            ids = [c.id for c in chunks]
+            out = RagOutput(
+                answer=text,
+                retrieved_chunk_ids=ids,
+                contexts=[c.text for c in chunks],
+                abstained=ABSTAIN_MESSAGE.lower() in text.lower(),
+                latency_ms=(time.perf_counter() - t0) * 1000,
+                citations=_parse_citations(text, set(ids)),
+            )
+            sp.set_attribute("output.abstained", out.abstained)
+            sp.set_attribute("output.citations", ", ".join(out.citations))
+            return out
