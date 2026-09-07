@@ -3,6 +3,7 @@ API key and no index; we assert the wiring: contract, citations, abstention, and
 that the provider switch selects the right backend."""
 
 import observable_rag.generate.answer as ans
+import observable_rag.generate.llm as llm
 from observable_rag.generate.answer import RagPipeline
 from observable_rag.generate.prompt import ABSTAIN_MESSAGE
 from observable_rag.ingest.chunk import Chunk
@@ -51,13 +52,13 @@ def test_abstains_when_model_emits_abstain_phrase():
 
 
 def test_llm_provider_switch(monkeypatch):
-    monkeypatch.setattr(ans, "_load_openai_llm", lambda: "openai-llm")
-    monkeypatch.setattr(ans, "_load_gemini_llm", lambda: "gemini-llm")
-    monkeypatch.setattr(ans, "_load_groq_llm", lambda: "groq-llm")
+    monkeypatch.setattr(llm, "_load_openai_llm", lambda: "openai-llm")
+    monkeypatch.setattr(llm, "_load_gemini_llm", lambda: "gemini-llm")
+    monkeypatch.setattr(llm, "_load_groq_llm", lambda: "groq-llm")
     for provider, expected in [("gemini", "gemini-llm"), ("openai", "openai-llm"),
                                ("groq", "groq-llm")]:
         monkeypatch.setenv("LLM_PROVIDER", provider)
-        assert ans._load_default_llm() == expected
+        assert llm._load_default_llm() == expected
 
 
 class _Msg:
@@ -93,7 +94,7 @@ class _Client:
 
 def test_chat_completer_retries_without_temperature_then_caches():
     client = _Client()
-    complete = ans._chat_completer(client, "temp-locked-model")
+    complete = llm._chat_completer(client, "temp-locked-model")
     assert complete([{"role": "user", "content": "hi"}]) == "ok"
     assert complete([{"role": "user", "content": "again"}]) == "ok"
     calls = client.chat.completions.calls
