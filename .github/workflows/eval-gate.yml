@@ -4,11 +4,6 @@ on: pull_request
 jobs:
   eval:
     runs-on: ubuntu-latest
-    services:
-      qdrant:
-        image: qdrant/qdrant:latest
-        ports:
-          - 6333:6333
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -17,14 +12,13 @@ jobs:
       - run: pip install -e ".[eval,dev]"
       - name: Run tests
         run: pytest -q
-      - name: Build index from corpus
-        run: python -m observable_rag.index.build
-        env:
-          DOC_LIMIT: "30"
+      - name: Build the full index from the corpus
+        run: python -m observable_rag.index.build   # full corpus: golden set references chunks across it
       - name: Run eval harness
         run: python eval/evaluate.py --golden data/eval/golden_set.jsonl --out eval_report.json
         env:
           LLM_PROVIDER: openai
-          GEMINI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # OPENAI_MODEL: gpt-4o-mini   # uncomment/set if your account needs a specific model
       - name: Gate on regression vs baseline
         run: python eval/ci_gate.py --baseline data/eval/baseline.json --current eval_report.json
