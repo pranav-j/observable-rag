@@ -55,3 +55,22 @@ def test_vector_search_returns_nearest():
     idx = VectorIndex(client=QdrantClient(":memory:"), collection="test", embed=_fake_embed)
     idx.build(CHUNKS)
     assert idx.search("use Depends for a dependency", top_k=3)[0][0] == "b#0"
+
+
+def test_vector_client_selects_server_or_embedded(monkeypatch):
+    import observable_rag.index.vector as v
+    seen = {}
+
+    class FakeClient:
+        def __init__(self, **kw):
+            seen.clear()
+            seen.update(kw)
+
+    monkeypatch.setattr(v, "QdrantClient", FakeClient)
+    monkeypatch.setenv("QDRANT_URL", "http://qdrant:6333")
+    v._make_client()
+    assert seen == {"url": "http://qdrant:6333"}          # server when QDRANT_URL set
+
+    monkeypatch.delenv("QDRANT_URL", raising=False)
+    v._make_client()
+    assert "path" in seen and "url" not in seen           # embedded otherwise
