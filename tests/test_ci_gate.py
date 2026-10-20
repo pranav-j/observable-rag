@@ -51,3 +51,23 @@ def test_gate_fails_when_false_answers_rise(tmp_path):
 def test_gate_tolerates_noise_within_margin(tmp_path):
     r = _run(tmp_path, _mutate(generation__faithfulness=0.97))  # -0.02, within 0.03
     assert r.returncode == 0, r.stdout
+
+def test_gate_fails_when_a_gated_metric_is_missing(tmp_path):
+    """A judge that silently produced nothing must not pass as 'skip'."""
+    r = _run(tmp_path, _mutate(generation__faithfulness=None,
+                               generation__answer_relevance=None))
+    assert r.returncode == 1, r.stdout
+    assert "missing from this run" in r.stdout
+
+
+def test_gate_skips_metrics_the_baseline_never_measured(tmp_path):
+    import copy
+    base = copy.deepcopy(BASELINE)
+    base["generation"]["faithfulness"] = None
+    b, c = tmp_path / "b.json", tmp_path / "c.json"
+    b.write_text(json.dumps(base))
+    c.write_text(json.dumps(base))
+    r = subprocess.run([sys.executable, GATE, "--baseline", str(b), "--current", str(c)],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout
+    assert "skip" in r.stdout

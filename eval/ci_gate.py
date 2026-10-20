@@ -52,6 +52,19 @@ def main() -> int:
     for (section, name), rule in GATES.items():
         base = _get(baseline, section, name)
         curr = _get(current, section, name)
+
+        # A metric the baseline measured but this run didn't is a FAILURE, not a
+        # skip. The judge swallows its own errors and returns None, the harness
+        # drops Nones when averaging, and treating the resulting null as "skip"
+        # let a run where the judge produced nothing sail through green.
+        if base is not None and curr is None:
+            rows.append((f"{section}.{name}", base, curr, "—", "MISSING"))
+            failures.append(
+                f"{section}.{name} is missing from this run but the baseline has it "
+                f"({base}). The metric was not measured -- check the judge and its "
+                f"credentials, or gate a run that measured it.")
+            continue
+
         if base is None or curr is None:
             rows.append((f"{section}.{name}", base, curr, "—", "skip"))
             continue
