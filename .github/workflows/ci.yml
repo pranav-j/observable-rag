@@ -1,0 +1,71 @@
+name: ci
+
+# Everything here runs without secrets, so it works on pull requests from forks.
+# The eval gate (eval-gate.yml) needs an API key and skips when it can't get one;
+# this is the check that is always meaningful.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Unit tests
+        run: pytest -q
+
+      # Chunking is pure Python, so the chunk-id contract can be checked without
+      # downloading the embedding model or standing up Qdrant.
+      - name: Build chunks from the pinned docs
+        run: python -m observable_rag.index.build --chunks-only
+        env:
+          FASTAPI_REF: ${{ vars.FASTAPI_REF }}
+
+      - name: Golden-set chunk ids still exist
+        run: python -m observable_rag.ingest.manifest --check --ids-only
+
+      # Text behind those ids drifting is a real problem but a softer one, and
+      # it is expected to be noisy until FASTAPI_REF is pinned to a tag or sha.
+      # Reported as a warning so it is visible without blocking unrelated work.
+      - name: Cited chunk text unchanged
+        continue-on-error: true
+        run: python -m observable_rag.ingest.manifest --check
+
+      - name: Integrity tests against the built corpus
+        run: pytest -q tests/test_golden_integrity.py
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: observable-rag:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: The app imports and serves /health
+        run: |
+          docker run -d --name rag -p 8000:8000 observable-rag:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health; then
+              echo "  health ok"; exit 0
+            fi
+            sleep 2
+          done
+          echo "health check never came up"; docker logs rag; exit 1
