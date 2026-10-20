@@ -7,8 +7,8 @@ cross-encoder and keeps the best few. Phase 4 wraps each stage in a span.
 
 from __future__ import annotations
 
-from ..ingest.chunk import Chunk
 from ..index import lexical, vector
+from ..ingest.chunk import Chunk
 from ..observability.tracing import record_retrieval, span
 from .rerank import CrossEncoderReranker
 from .store import load_chunks

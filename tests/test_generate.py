@@ -2,7 +2,6 @@
 API key and no index; we assert the wiring: contract, citations, abstention, and
 that the provider switch selects the right backend."""
 
-import observable_rag.generate.answer as ans
 import observable_rag.generate.llm as llm
 from observable_rag.generate.answer import RagPipeline
 from observable_rag.generate.prompt import ABSTAIN_MESSAGE

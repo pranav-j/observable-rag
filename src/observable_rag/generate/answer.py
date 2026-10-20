@@ -12,7 +12,6 @@ import re
 import time
 from dataclasses import dataclass, field
 
-from ..ingest.chunk import Chunk
 from ..observability.tracing import span
 from ..retrieve.hybrid import retrieve as hybrid_retrieve
 from .llm import _load_default_llm  # re-exported for scripts/make_golden.py

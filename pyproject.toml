@@ -31,3 +31,8 @@ packages = ["src/observable_rag"]
 
 [tool.ruff]
 line-length = 100
+
+# Pinned so CI and a local run agree; without a select here ruff falls back to
+# whatever the developer's global config happens to say.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
