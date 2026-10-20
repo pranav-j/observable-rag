@@ -121,3 +121,23 @@ def test_fabricated_citations_are_reported_not_just_dropped():
     out = pipe.answer("what is it built on?")
     assert out.citations == ["a#0"]
     assert out.invalid_citations == ["index#starlette-features"]
+
+
+def test_abstention_is_matched_on_the_opening_not_anywhere():
+    """Declining and then saying what the docs DO cover is still a decline; a
+    sentence that merely mentions the phrase is not."""
+    declined = RagPipeline(
+        complete=lambda m: f"{ABSTAIN_MESSAGE} The sources cover Depends [a#0].",
+        retrieve=_retrieve)
+    assert declined.answer("?").abstained is True
+
+    talked_about_it = RagPipeline(
+        complete=lambda m: f"I would not say '{ABSTAIN_MESSAGE}' here [a#0].",
+        retrieve=_retrieve)
+    assert talked_about_it.answer("?").abstained is False
+
+    paraphrased = RagPipeline(
+        complete=lambda m: "No, the docs do not mention that [a#0].",
+        retrieve=_retrieve)
+    assert paraphrased.answer("?").abstained is False, \
+        "a paraphrase must not count: the exact opening is the contract"

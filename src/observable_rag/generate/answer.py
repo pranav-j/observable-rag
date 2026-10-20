@@ -35,6 +35,22 @@ class RagOutput:
     invalid_citations: list[str] = field(default_factory=list)
 
 
+def _is_abstention(text: str) -> bool:
+    """Did the model decline?
+
+    Matched on the OPENING of the reply, not anywhere inside it. Substring
+    matching counted "I can't just say 'The documentation does not cover this.'"
+    as an abstention, and requiring the sentence to be the entire reply meant a
+    model that correctly declined and then helpfully noted what the docs DO
+    cover was recorded as a hallucination. Anchoring to the start keeps the
+    check deterministic and auditable while leaving room to be useful.
+
+    The elaboration after the opening is not itself checked here; it still
+    carries citations and is still subject to the judge metrics.
+    """
+    return text.strip().lower().startswith(ABSTAIN_MESSAGE.lower())
+
+
 def _parse_citations(answer: str, valid: set[str]) -> tuple[list[str], list[str]]:
     """Split the answer's citation attempts into (resolved, fabricated)."""
     good: list[str] = []
@@ -76,7 +92,7 @@ class RagPipeline:
                 answer=text,
                 retrieved_chunk_ids=ids,
                 contexts=[c.text for c in chunks],
-                abstained=ABSTAIN_MESSAGE.lower() in text.lower(),
+                abstained=_is_abstention(text),
                 latency_ms=(time.perf_counter() - t0) * 1000,
                 citations=cited,
                 invalid_citations=fabricated,
