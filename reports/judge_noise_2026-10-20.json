@@ -1,24 +1,31 @@
 {
   "metadata": {
-    "timestamp": "2026-10-20T11:01:33.329489+00:00",
-    "git_sha": "b6deeb1",
+    "timestamp": "2026-10-20T15:56:29.061732+00:00",
+    "git_sha": "5d1bb77",
     "k": 5,
     "n_items": 26,
     "n_answerable": 20,
     "n_unanswerable": 6,
     "judge_graded": {
-      "faithfulness": 5,
-      "answer_relevance": 5,
-      "citation_precision": 4
+      "faithfulness": 20,
+      "answer_relevance": 20,
+      "citation_precision": 16
     },
-    "system": "RagPipeline",
+    "judge_gradable": 20,
+    "judge_coverage": {
+      "faithfulness": 1.0,
+      "answer_relevance": 1.0,
+      "citation_precision": 0.8
+    },
+    "judge_undercovered": [],
+    "system": "replay:eval_items.jsonl",
     "generator": {
       "provider": "openai",
       "model": "gpt-5-nano"
     },
     "judge": {
-      "provider": "gemini",
-      "model": "gemini-3.7-flash",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
       "independent": true,
       "runs": 3
     },
@@ -34,9 +41,9 @@
     "mrr": 0.7767
   },
   "generation": {
-    "faithfulness": 1.0,
+    "faithfulness": 0.95,
     "answer_relevance": 1.0,
-    "citation_precision": 1.0
+    "citation_precision": 0.9062
   },
   "robustness": {
     "false_answer_rate": 0.0,
@@ -64,7 +71,7 @@
       0.925
     ],
     "faithfulness": [
-      1.0,
+      0.85,
       1.0
     ],
     "answer_relevance": [
@@ -72,7 +79,7 @@
       1.0
     ],
     "citation_precision": [
-      1.0,
+      0.75,
       1.0
     ],
     "false_answer_rate": [
@@ -86,25 +93,25 @@
   },
   "judge_spread": {
     "faithfulness": {
-      "mean": 1.0,
-      "min": 1.0,
-      "max": 1.0,
+      "mean": 0.95,
+      "min": 0.95,
+      "max": 0.95,
       "stdev": 0.0,
-      "runs": 1
+      "runs": 3
     },
     "answer_relevance": {
       "mean": 1.0,
       "min": 1.0,
       "max": 1.0,
       "stdev": 0.0,
-      "runs": 1
+      "runs": 3
     },
     "citation_precision": {
-      "mean": 1.0,
-      "min": 1.0,
-      "max": 1.0,
+      "mean": 0.9062,
+      "min": 0.9062,
+      "max": 0.9062,
       "stdev": 0.0,
-      "runs": 1
+      "runs": 3
     }
   },
   "per_category": {
@@ -113,9 +120,9 @@
       "all_relevant_at_5": 1.0,
       "context_precision_at_5": 0.2,
       "mrr": 1.0,
-      "faithfulness": null,
-      "answer_relevance": null,
-      "citation_precision": null,
+      "faithfulness": 1.0,
+      "answer_relevance": 1.0,
+      "citation_precision": 0.5,
       "false_answer_rate": null,
       "false_abstention_rate": 0.0,
       "n": 2
@@ -125,9 +132,9 @@
       "all_relevant_at_5": 0.8824,
       "context_precision_at_5": 0.1765,
       "mrr": 0.7765,
-      "faithfulness": 1.0,
+      "faithfulness": 0.9412,
       "answer_relevance": 1.0,
-      "citation_precision": 1.0,
+      "citation_precision": 0.9286,
       "false_answer_rate": null,
       "false_abstention_rate": 0.0,
       "n": 17
