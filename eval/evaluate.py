@@ -79,6 +79,7 @@ class RagOutput:
     abstained: bool = False
     latency_ms: Optional[float] = None
     citations: list[str] = field(default_factory=list)
+    invalid_citations: list[str] = field(default_factory=list)
 
 
 class RagSystem(Protocol):
@@ -242,6 +243,7 @@ class ItemResult:
     retrieved_chunk_ids: list[str]
     contexts: list[str]
     citations: list[str]
+    invalid_citations: list[str]
     latency_ms: Optional[float]
     recall: Optional[float] = None
     all_relevant: Optional[float] = None
@@ -315,6 +317,7 @@ def run_eval(system: RagSystem, items: list[GoldenItem], k: int = 5,
             retrieved_chunk_ids=list(out.retrieved_chunk_ids),
             contexts=list(out.contexts),
             citations=list(getattr(out, "citations", [])),
+            invalid_citations=list(getattr(out, "invalid_citations", [])),
             latency_ms=out.latency_ms,
         )
         if it.answerable:
@@ -365,6 +368,20 @@ def run_eval(system: RagSystem, items: list[GoldenItem], k: int = 5,
     return report, results
 
 
+def citation_validity(results: Sequence[ItemResult]) -> Optional[float]:
+    """Share of the model's citation ATTEMPTS that name a real retrieved chunk.
+
+    Deterministic -- no judge involved. Fabricated anchors used to be dropped
+    before anyone counted them, so an answer citing two invented chunk ids was
+    indistinguishable from one that cited nothing, and citation_precision never
+    saw it because there was nothing left to grade.
+    """
+    attempts = sum(len(r.citations) + len(r.invalid_citations) for r in results)
+    if not attempts:
+        return None
+    return round(sum(len(r.citations) for r in results) / attempts, 4)
+
+
 def _metric_columns(results: Sequence[ItemResult]) -> dict:
     return {
         "recall": [r.recall for r in results],
@@ -390,6 +407,7 @@ def _slice(results: Sequence[ItemResult], k: int) -> dict:
         "citation_precision": _mean(cols["citation_precision"]),
         "false_answer_rate": _rate([r.false_answer for r in results]),
         "false_abstention_rate": _rate([r.false_abstention for r in results]),
+        "citation_validity": citation_validity(results),
         "n": len(results),
     }
 
@@ -444,6 +462,7 @@ def _aggregate(results: list[ItemResult], k: int, judge_runs: list[dict],
             "faithfulness": judge_metric("faithfulness"),
             "answer_relevance": judge_metric("answer_relevance"),
             "citation_precision": judge_metric("citation_precision"),
+            "citation_validity": citation_validity(results),
         },
         "robustness": {
             "false_answer_rate": _rate([r.false_answer for r in unanswerable]),
@@ -499,6 +518,11 @@ def _build_system() -> tuple[RagSystem, str]:
         return _StubSystem(), "stub"
 
 
+def _reparse_citations(answer: str, retrieved: set) -> tuple[list, list]:
+    from observable_rag.generate.answer import _parse_citations
+    return _parse_citations(answer, retrieved)
+
+
 class _ReplaySystem:
     """Serves answers recorded by a previous run.
 
@@ -516,12 +540,20 @@ class _ReplaySystem:
 
     def answer(self, question: str) -> RagOutput:
         row = self.by_question[question]
+        cited = row.get("citations", [])
+        fabricated = row.get("invalid_citations")
+        if fabricated is None:
+            # Item files written before fabricated citations were tracked still
+            # carry the raw answer, so re-derive rather than report a false zero.
+            cited, fabricated = _reparse_citations(
+                row["answer"], set(row["retrieved_chunk_ids"]))
         return RagOutput(answer=row["answer"],
                          retrieved_chunk_ids=row["retrieved_chunk_ids"],
                          contexts=row.get("contexts", []),
                          abstained=row["abstained"],
                          latency_ms=row.get("latency_ms"),
-                         citations=row.get("citations", []))
+                         citations=cited,
+                         invalid_citations=fabricated)
 
 
 def _build_judge():

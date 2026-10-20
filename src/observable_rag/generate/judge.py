@@ -25,6 +25,7 @@ on the wrong chunks. Graded per citation, not per answer.
 from __future__ import annotations
 
 import re
+import time
 from collections import Counter
 from typing import Optional, Sequence
 
@@ -63,6 +64,25 @@ def _parse_score(text: str) -> Optional[float]:
         return None
 
 
+_RETRY_AFTER = re.compile(r"try again in ([\d.]+)\s*s|retry in ([\d.]+)\s*s")
+
+
+def _is_rate_limit(message: str) -> bool:
+    lowered = message.lower()
+    return ("429" in message or "rate limit" in lowered
+            or "resource_exhausted" in lowered or "quota" in lowered)
+
+
+def _retry_after(message: str, default: float) -> float:
+    """Honour the wait the server asks for; cap it so a DAILY quota (which can
+    report hours) fails fast instead of hanging the eval."""
+    m = _RETRY_AFTER.search(message)
+    if m:
+        seconds = float(m.group(1) or m.group(2))
+        return min(seconds + 0.5, 30.0)
+    return default
+
+
 def _claim_for(answer: str, chunk_id: str) -> Optional[str]:
     """The sentence that carries [chunk_id], with citation markers stripped.
 
@@ -88,8 +108,10 @@ def _strip_markers(text: str) -> Optional[str]:
 class LLMJudge:
     """Judge conforming to the harness's Judge protocol, backed by an LLM."""
 
-    def __init__(self, complete=None):
+    def __init__(self, complete=None, retries: int = 4):
         self._complete = complete
+        self.retries = max(1, retries)
+        self.retried = 0
         self.calls = 0
         self.failures: "Counter[str]" = Counter()
         self.first_error: Optional[str] = None
@@ -102,7 +124,12 @@ class LLMJudge:
         return self._complete
 
     def _grade(self, system: str, user: str) -> Optional[float]:
-        """Degrade to None on error, but COUNT it.
+        """Grade once, retrying a rate limit, and COUNT whatever still fails.
+
+        Retries matter here because a per-minute token cap is transient: waiting
+        the second or two the server asks for turns a dropped item into a graded
+        one. A daily quota is not transient, so the retries give up quickly and
+        the failure is recorded rather than hidden.
 
         Returning None quietly is how a judge that was rate-limited into
         uselessness still produced a confident-looking 1.0 over the handful of
@@ -110,16 +137,23 @@ class LLMJudge:
         report carries them, so a dead judge is visible instead of flattering.
         """
         self.calls += 1
-        try:
-            return _parse_score(self.complete(
-                [{"role": "system", "content": system},
-                 {"role": "user", "content": user}]))
-        except Exception as e:  # noqa: BLE001
-            kind = type(e).__name__
-            self.failures[kind] += 1
-            if self.first_error is None:
-                self.first_error = f"{kind}: {str(e)[:300]}"
-            return None
+        messages = [{"role": "system", "content": system},
+                    {"role": "user", "content": user}]
+        for attempt in range(self.retries):
+            try:
+                return _parse_score(self.complete(messages))
+            except Exception as e:  # noqa: BLE001
+                kind = type(e).__name__
+                message = str(e)
+                if _is_rate_limit(message) and attempt < self.retries - 1:
+                    self.retried += 1
+                    time.sleep(_retry_after(message, default=2.0 * (attempt + 1)))
+                    continue
+                self.failures[kind] += 1
+                if self.first_error is None:
+                    self.first_error = f"{kind}: {message[:300]}"
+                return None
+        return None
 
     @property
     def failed(self) -> int:

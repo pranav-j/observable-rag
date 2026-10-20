@@ -237,3 +237,18 @@ def test_full_coverage_still_reports_the_metric():
     assert report["generation"]["faithfulness"] == 1.0
     assert report["metadata"]["judge_coverage"]["faithfulness"] == 1.0
     assert report["metadata"]["judge_undercovered"] == []
+
+
+def test_citation_validity_counts_attempts_not_just_survivors():
+    from evaluate import ItemResult, citation_validity
+
+    def item(good, bad):
+        return ItemResult(id="x", qtype="factual", answerable=True, question="q",
+                          answer="a", abstained=False, retrieved_chunk_ids=[],
+                          contexts=[], citations=good, invalid_citations=bad,
+                          latency_ms=1.0)
+
+    assert citation_validity([item(["a#0"], [])]) == 1.0
+    assert citation_validity([item([], ["ghost#x"])]) == 0.0
+    assert citation_validity([item(["a#0"], ["ghost#x"])]) == 0.5
+    assert citation_validity([item([], [])]) is None       # no attempts to judge

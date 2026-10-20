@@ -109,3 +109,15 @@ def test_empty_env_vars_fall_back_to_defaults(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "")
     assert llm.resolve_generation() == (llm.DEFAULT_PROVIDER,
                                         llm.PROVIDERS[llm.DEFAULT_PROVIDER]["default_model"])
+
+
+def test_fabricated_citations_are_reported_not_just_dropped():
+    """gpt-5-nano answered 'What two libraries is FastAPI built on?' with
+    [index#starlette-features] -- plausible-looking, not a real chunk id. Those
+    used to vanish, leaving an answer that looked uncited rather than miscited."""
+    pipe = RagPipeline(
+        complete=lambda m: "Starlette and Pydantic [a#0][index#starlette-features].",
+        retrieve=_retrieve)
+    out = pipe.answer("what is it built on?")
+    assert out.citations == ["a#0"]
+    assert out.invalid_citations == ["index#starlette-features"]

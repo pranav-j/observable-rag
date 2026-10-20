@@ -117,3 +117,55 @@ def test_parse_score_ignores_numbers_that_are_not_scores():
     assert _parse_score("7/10") is None      # used to read the '1' of '10' as 1.0
     assert _parse_score("95") is None
     assert _parse_score("0.9/1.0") == 0.9
+
+
+# --- rate-limit handling -----------------------------------------------------
+
+def test_a_transient_rate_limit_is_retried(monkeypatch):
+    monkeypatch.setattr("observable_rag.generate.judge.time.sleep", lambda _s: None)
+    attempts = []
+
+    def flaky(_messages):
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise RuntimeError("Error code: 429 - rate limit reached, try again in 1.5s")
+        return "0.8"
+
+    j = LLMJudge(complete=flaky)
+    assert j.faithfulness("q", "a", ["ctx"]) == 0.8
+    assert j.retried == 2
+    assert j.failed == 0
+
+
+def test_a_persistent_rate_limit_is_recorded_not_hidden(monkeypatch):
+    monkeypatch.setattr("observable_rag.generate.judge.time.sleep", lambda _s: None)
+
+    def dead(_messages):
+        raise RuntimeError("Error code: 429 - quota exceeded, retry in 19h57m")
+
+    j = LLMJudge(complete=dead, retries=3)
+    assert j.faithfulness("q", "a", ["ctx"]) is None
+    assert j.failed == 1
+    assert "429" in j.first_error
+
+
+def test_a_non_rate_limit_error_is_not_retried(monkeypatch):
+    calls = []
+
+    def boom(_messages):
+        calls.append(1)
+        raise RuntimeError("model not found")
+
+    j = LLMJudge(complete=boom)
+    assert j.faithfulness("q", "a", ["ctx"]) is None
+    assert len(calls) == 1, "only rate limits should be retried"
+
+
+def test_retry_delay_honours_the_server_but_caps_it():
+    from observable_rag.generate.judge import _retry_after
+    assert _retry_after("try again in 1.5525s", default=9) == 2.0525
+    assert _retry_after("try again in 600s", default=9) == 30.0        # capped
+    assert _retry_after("no hint here", default=9) == 9
+    # a daily quota reports hours in a format we deliberately don't parse, so it
+    # falls back to the short default and gives up quickly instead of sleeping
+    assert _retry_after("Please retry in 19h57m52.8s", default=9) == 9

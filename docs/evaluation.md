@@ -93,6 +93,16 @@ ones.
 | `answer_relevance` | does the answer address the question? |
 | `citation_precision` | does each cited chunk back the sentence citing it? |
 
+`citation_validity` sits next to these but needs no judge: it's the share of the
+model's citation *attempts* that name a chunk that was actually retrieved. The
+model invents anchors that look like documentation headings
+(`tutorial/middleware#adding-asgi-middlewares`) rather than chunk indices
+(`tutorial/middleware#3`). Those used to be dropped silently during parsing, so
+an answer citing two invented chunks was indistinguishable from one citing
+nothing, and `citation_precision` couldn't see them because nothing survived to
+grade. Read the two together: precision tells you whether the surviving
+citations were apt, validity tells you how many survived at all.
+
 **The judge is a different model from the generator.** A model grading its own
 output rates itself generously. `llm.resolve_judge()` picks a provider the
 generator isn't using; `JUDGE_PROVIDER` and `JUDGE_MODEL` override it. When no
@@ -105,10 +115,22 @@ claims supported" has no answer; scoring it 0 or 1 would be inventing one.
 `metadata.judge_graded` records how many items each judge metric actually
 covered, so the size of that exclusion is visible rather than implied.
 
-**Repeated runs.** `--judge-runs N` grades the same stored answers N times. The
-system runs once either way, so the spread under `judge_spread` (mean, min, max,
-stdev across runs) is judge noise, not generator noise. That's the number the CI
-gate's margins should be derived from.
+**Repeated runs.** `--judge-runs N` grades the same stored answers N times and
+reports mean, min, max and stdev under `judge_spread`. Be careful what you
+conclude from it: at `temperature=0` over identical answers the judge is
+deterministic, and measured spread across three passes was exactly 0.0000 for
+all three metrics. That means the metric is reproducible, not that it's stable
+under change — the variation a CI margin has to absorb comes from regenerating
+answers, which needs repeated *full* runs to measure.
+
+If a repeated run does show spread, check `judge_coverage` first. Dropped calls
+change the denominator between passes and produce spread that looks like judge
+noise but isn't.
+
+**Replaying answers.** `--rejudge eval_items.jsonl` re-grades answers from a
+previous run instead of calling the generator again, so repeated judging costs
+only the judge's own calls. Paired with `--no-judge` it recomputes the
+deterministic metrics for free.
 
 ## Confidence intervals
 

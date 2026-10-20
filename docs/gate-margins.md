@@ -63,9 +63,10 @@ Worth separating, because it changes what a margin is *for*:
 | `all_relevant_at_5` | — | **0.03** | add; the metric that matters for multi-hop |
 | `context_precision_at_5` | 0.03 | **0.03** | unchanged |
 | `mrr` | ungated | **0.05** | add; it's a README headline and nothing currently guards it |
-| `faithfulness` | 0.03 | **measure first** | set to 3× the stdev across repeated judge runs |
-| `answer_relevance` | 0.03 | **measure first** | same |
-| `citation_precision` | — | **measure first** | same |
+| `faithfulness` | 0.03 | **0.05, provisionally** | judge replay is deterministic, so repeats measure nothing — see below |
+| `answer_relevance` | 0.03 | **0.05, provisionally** | same |
+| `citation_precision` | — | **0.05, provisionally** | same |
+| `citation_validity` | — | **0.05** | add; deterministic, and currently 0.561 |
 | `false_answer_rate` | 0.02 | **0.10** | with ~16 unanswerable items one flip is 0.0625; 0.10 absorbs one, fails on two |
 | `false_abstention_rate` | ungated | **0.10** | add; otherwise the gate can be passed by abstaining more |
 | `latency_ms.p95` | 150 ms | **ungate** | replace with retrieval-stage latency once per-stage timings exist |
@@ -77,18 +78,62 @@ granularity means "any regression fails", and for a deterministic metric that is
 the correct setting — there is no noise for it to absorb. It only becomes a
 problem when the corpus moves under the baseline, which is a separate fix.
 
-**The three judge margins are deliberately blank.** Guessing them is how the
-current ones got here. `eval/evaluate.py --judge-runs 3` grades the same stored
-answers three times and reports mean, min, max and stdev per metric under
-`judge_spread`. The margin should be roughly 3× that stdev — wide enough that
-normal judge wobble passes, narrow enough to catch a real drop. That run hasn't
-happened yet.
+**The judge margins are provisional, because repeating the judge measured
+nothing.** The plan was to take 3× the standard deviation across repeated judge
+runs. That run happened — `reports/judge_noise_2026-10-20.json`, three passes
+over the same stored answers with `gpt-4o-mini` judging a `gpt-5-nano`
+generator, full coverage, no errors:
+
+| metric | mean | min | max | stdev |
+| --- | --- | --- | --- | --- |
+| `faithfulness` | 0.9500 | 0.9500 | 0.9500 | **0.0000** |
+| `answer_relevance` | 1.0000 | 1.0000 | 1.0000 | **0.0000** |
+| `citation_precision` | 0.9062 | 0.9062 | 0.9062 | **0.0000** |
+
+Zero variance, three times out of three. That isn't a stable metric — it's a
+deterministic one. The judge runs at `temperature=0` over identical stored
+answers, so the three passes are the same computation performed three times.
+3 × 0 = 0 is not a usable margin.
+
+A trap worth naming: an earlier attempt on a rate-limited provider *did* show
+spread (`citation_precision` 0.8846–0.9062). That was not judge noise. Different
+calls were dropped on each pass, so the metric's denominator changed between
+runs. Apparent noise from a degraded run is easy to mistake for the real thing,
+which is why the report now carries `judge_coverage` and `judge_errors`.
+
+So the variance a margin needs to absorb isn't in the judge at all — it's in
+**regeneration**. Measuring it means N full runs (generate *and* judge), not N
+judge passes over one set of answers, at roughly $0.05 a run. Until that
+happens, 0.05 is a deliberate placeholder: wide enough to absorb one item
+flipping on a 20-item denominator, narrow enough to catch a collapse. It is not
+a measured number and shouldn't be described as one.
 
 **Ungating latency is not the same as ignoring it.** End-to-end p95 is worth
 reporting and watching; it just isn't something a pull request can be
 responsible for when the LLM call is 95% of it. Per-stage retrieval latency —
 embed, dense search, BM25, fusion, rerank — is local, deterministic, and worth
 gating. Those spans don't exist separately yet.
+
+## A new candidate: `citation_validity`
+
+The same run turned up a failure nothing was measuring. `citation_validity` is
+the share of the model's citation *attempts* that name a chunk actually
+retrieved. On the current golden set (`reports/citations_2026-10-20.json`):
+
+**0.561 — 23 of 41 citation attempts resolved; 18 were fabricated**, across 6 of
+the 20 answered questions.
+
+The invented ones are all the same shape: Markdown heading anchors rather than
+chunk indices — `tutorial/middleware#adding-asgi-middlewares` where the scheme
+is `tutorial/middleware#3`. They were being discarded during parsing, so an
+answer citing two invented chunks looked identical to one citing nothing, and
+`citation_precision` never saw them because there was nothing left to grade.
+That is why `citation_precision` reads 0.906 while barely half the citations the
+model emitted were real.
+
+It's deterministic and it's cheap, so it belongs in the gate. Note that fixing
+the underlying prompt would move it sharply, which is a change to the system
+being evaluated and needs its own baseline.
 
 ## Dependencies
 

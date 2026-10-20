@@ -17,7 +17,11 @@ from ..retrieve.hybrid import retrieve as hybrid_retrieve
 from .llm import _load_default_llm  # re-exported for scripts/make_golden.py
 from .prompt import ABSTAIN_MESSAGE, build_messages
 
-_CITE = re.compile(r"\[([^\]\s]+#\d+)\]")
+# Any bracketed token is a citation ATTEMPT; only ones matching source#<int>
+# AND naming a retrieved chunk count as real. The model invents plausible-looking
+# anchors ("[index#starlette-features]") that silently vanished before we started
+# counting them, leaving an answer that looks uncited rather than wrongly cited.
+_CITE = re.compile(r"\[([^\]\s]+#[^\]\s]+)\]")
 
 
 @dataclass
@@ -28,14 +32,18 @@ class RagOutput:
     abstained: bool = False
     latency_ms: float | None = None
     citations: list[str] = field(default_factory=list)
+    invalid_citations: list[str] = field(default_factory=list)
 
 
-def _parse_citations(answer: str, valid: set[str]) -> list[str]:
-    seen: list[str] = []
+def _parse_citations(answer: str, valid: set[str]) -> tuple[list[str], list[str]]:
+    """Split the answer's citation attempts into (resolved, fabricated)."""
+    good: list[str] = []
+    bad: list[str] = []
     for cid in _CITE.findall(answer):
-        if cid in valid and cid not in seen:
-            seen.append(cid)
-    return seen
+        target = good if cid in valid else bad
+        if cid not in target:
+            target.append(cid)
+    return good, bad
 
 
 class RagPipeline:
@@ -63,14 +71,17 @@ class RagPipeline:
             with span("generate"):
                 text = self.complete(build_messages(question, chunks))
             ids = [c.id for c in chunks]
+            cited, fabricated = _parse_citations(text, set(ids))
             out = RagOutput(
                 answer=text,
                 retrieved_chunk_ids=ids,
                 contexts=[c.text for c in chunks],
                 abstained=ABSTAIN_MESSAGE.lower() in text.lower(),
                 latency_ms=(time.perf_counter() - t0) * 1000,
-                citations=_parse_citations(text, set(ids)),
+                citations=cited,
+                invalid_citations=fabricated,
             )
             sp.set_attribute("output.abstained", out.abstained)
             sp.set_attribute("output.citations", ", ".join(out.citations))
+            sp.set_attribute("output.invalid_citations", ", ".join(fabricated))
             return out
