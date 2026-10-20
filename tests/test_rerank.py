@@ -41,3 +41,24 @@ def test_retrieve_pipeline(monkeypatch):
     out = hybrid.retrieve("declare a dependency with Depends",
                           store=store, reranker=r, top_n=2)
     assert [c.id for c in out] == ["b#0", "a#0"]
+
+def test_reranker_and_store_are_reused_across_queries(monkeypatch):
+    """They used to be rebuilt per call, and the cross-encoder loads lazily, so
+    every query re-read the model from disk."""
+    import observable_rag.retrieve.hybrid as hybrid
+
+    monkeypatch.setattr(hybrid, "_reranker", None)
+    monkeypatch.setattr(hybrid, "_store", None)
+
+    built = []
+    monkeypatch.setattr(hybrid, "CrossEncoderReranker",
+                        lambda *a, **k: built.append(1) or object())
+    loads = []
+    monkeypatch.setattr(hybrid, "load_chunks", lambda: loads.append(1) or {})
+
+    for _ in range(5):
+        hybrid.get_reranker()
+        hybrid.get_store()
+
+    assert built == [1], "the cross-encoder was constructed more than once"
+    assert loads == [1], "chunks.jsonl was re-read more than once"

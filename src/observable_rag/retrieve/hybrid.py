@@ -28,15 +28,41 @@ def hybrid_search(query: str, top_k_each: int = 20, rrf_k: int = 60) -> list[str
     return reciprocal_rank_fusion([dense, lexical_hits], k=rrf_k)
 
 
+_reranker: "CrossEncoderReranker | None" = None
+_store: "dict[str, Chunk] | None" = None
+
+
+def get_reranker() -> CrossEncoderReranker:
+    """One cross-encoder for the process.
+
+    This used to be constructed per call, and the model loads lazily on first
+    use, so every single query re-read the cross-encoder from disk -- seconds of
+    the measured latency, on a stage that should cost milliseconds. Same pattern
+    as index.vector.get_index() and index.lexical.get_index().
+    """
+    global _reranker
+    if _reranker is None:
+        _reranker = CrossEncoderReranker()
+    return _reranker
+
+
+def get_store() -> "dict[str, Chunk]":
+    """chunks.jsonl parsed once, not re-read on every query."""
+    global _store
+    if _store is None:
+        _store = load_chunks()
+    return _store
+
+
 def retrieve(query: str, top_k_each: int = 20, rrf_k: int = 60, top_n: int = 5,
              store: "dict[str, Chunk] | None" = None,
              reranker: "CrossEncoderReranker | None" = None) -> list[Chunk]:
     with span("retrieve", **{"input.value": query, "retrieve.top_n": top_n}) as sp:
         with span("hybrid_search"):
             ids = hybrid_search(query, top_k_each=top_k_each, rrf_k=rrf_k)
-        store = load_chunks() if store is None else store
+        store = get_store() if store is None else store
         candidates = [store[cid] for cid in ids if cid in store]
         with span("rerank", **{"rerank.candidates": len(candidates)}):
-            result = (reranker or CrossEncoderReranker()).rerank(query, candidates, top_n)
+            result = (reranker or get_reranker()).rerank(query, candidates, top_n)
         record_retrieval(sp, query, [c.id for c in result])
         return result

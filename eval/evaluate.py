@@ -425,6 +425,7 @@ def _aggregate(results: list[ItemResult], k: int, judge_runs: list[dict],
         "confidence_intervals": {
             f"recall_at_{k}": bootstrap_ci(cols["recall"]),
             f"all_relevant_at_{k}": bootstrap_ci(cols["all_relevant"]),
+            f"context_precision_at_{k}": bootstrap_ci(cols["precision"]),
             "mrr": bootstrap_ci(cols["rr"]),
             "faithfulness": bootstrap_ci(cols["faithfulness"]),
             "answer_relevance": bootstrap_ci(cols["answer_relevance"]),
