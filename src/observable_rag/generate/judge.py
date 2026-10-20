@@ -13,8 +13,13 @@ The judge degrades to None on any error: a judge failure must never crash the
 eval or silently score it zero. The CI gate treats a missing gated metric as a
 failure, so that None can't pass as "skip".
 
-    faithfulness     -- are the answer's claims supported by the retrieved sources?
-    answer_relevance -- does the answer actually address the question?
+    faithfulness       -- are the answer's claims supported by the retrieved sources?
+    answer_relevance   -- does the answer actually address the question?
+    citation_precision -- does each [chunk] cited actually back the sentence citing it?
+
+citation_precision is the one that catches a specific, common failure: an answer
+that is broadly faithful to the retrieved set as a whole, but hangs its citations
+on the wrong chunks. Graded per citation, not per answer.
 """
 
 from __future__ import annotations
@@ -35,7 +40,16 @@ _RELEVANCE_PROMPT = (
     "the number between 0 and 1."
 )
 
-_NUM = re.compile(r"[01](?:\.\d+)?|0?\.\d+")
+_CITATION_PROMPT = (
+    "You check one citation. Reply 1 if the SOURCE directly supports the CLAIM, and "
+    "0 if it does not, even if the claim is true in general. Reply with ONLY 0 or 1."
+)
+
+# Anchored so a stray number can't be read as a score: "7/10" used to match the
+# '1' of '10' and come back as a perfect 1.0.
+_NUM = re.compile(r"(?<![\d.])(?:[01](?:\.\d+)?|\.\d+)(?![\d.])")
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+_CITE_MARKER = re.compile(r"\[[^\]\s]+#\d+\]")
 
 
 def _parse_score(text: str) -> Optional[float]:
@@ -46,6 +60,28 @@ def _parse_score(text: str) -> Optional[float]:
         return max(0.0, min(1.0, float(m.group(0))))
     except ValueError:
         return None
+
+
+def _claim_for(answer: str, chunk_id: str) -> Optional[str]:
+    """The sentence that carries [chunk_id], with citation markers stripped.
+
+    Falls back to the whole answer when the citation isn't inside a sentence we
+    can isolate, so a one-line answer still gets graded.
+    """
+    marker = f"[{chunk_id}]"
+    if marker not in answer:
+        return None
+    for sentence in _SENTENCE_SPLIT.split(answer):
+        if marker in sentence:
+            return _strip_markers(sentence)
+    return _strip_markers(answer)
+
+
+def _strip_markers(text: str) -> Optional[str]:
+    text = _CITE_MARKER.sub("", text)
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s+([.!?,;:])", r"\1", text).strip()
+    return text or None
 
 
 class LLMJudge:
@@ -83,3 +119,24 @@ class LLMJudge:
             return None
         return self._grade(_RELEVANCE_PROMPT,
                            f"QUESTION:\n{question}\n\nANSWER:\n{answer}")
+
+    def citation_precision(self, answer: str,
+                           cited_chunks: dict[str, str]) -> Optional[float]:
+        """Fraction of the answer's citations whose chunk backs the claim it's on.
+
+        Each citation is graded against the sentence it appears in, not the whole
+        answer: the failure we're looking for is a right-ish answer wearing the
+        wrong citation, and whole-answer grading hides it.
+        """
+        if not answer.strip() or not cited_chunks:
+            return None
+        verdicts = []
+        for chunk_id, text in cited_chunks.items():
+            claim = _claim_for(answer, chunk_id)
+            if not claim:
+                continue
+            score = self._grade(_CITATION_PROMPT,
+                                f"SOURCE:\n{text}\n\nCLAIM:\n{claim}")
+            if score is not None:
+                verdicts.append(1.0 if score >= 0.5 else 0.0)
+        return sum(verdicts) / len(verdicts) if verdicts else None

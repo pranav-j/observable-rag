@@ -78,3 +78,42 @@ def test_unknown_judge_provider_is_rejected(monkeypatch):
     monkeypatch.setenv("JUDGE_PROVIDER", "nope")
     with pytest.raises(ValueError):
         llm.resolve_judge()
+
+
+# --- citation precision ------------------------------------------------------
+
+from observable_rag.generate.judge import _claim_for  # noqa: E402
+
+
+def test_claim_is_the_sentence_carrying_the_citation():
+    answer = ("Background tasks run after the response [a#0]. "
+              "Use Depends to declare a dependency [b#1].")
+    assert _claim_for(answer, "b#1") == "Use Depends to declare a dependency."
+    assert _claim_for(answer, "a#0") == "Background tasks run after the response."
+    assert _claim_for(answer, "missing#9") is None
+
+
+def test_citation_precision_grades_each_citation():
+    seen = []
+
+    def complete(messages):
+        seen.append(messages[1]["content"])
+        return "1" if "Depends" in messages[0]["content"] + messages[1]["content"] else "0"
+
+    j = LLMJudge(complete=complete)
+    score = j.citation_precision(
+        "Tasks run later [a#0]. Use Depends here [b#1].",
+        {"a#0": "unrelated text", "b#1": "Depends declares a dependency"})
+    assert score == 0.5          # one citation supported, one not
+    assert len(seen) == 2        # graded per citation, not per answer
+
+
+def test_citation_precision_without_citations_is_none():
+    j = LLMJudge(complete=lambda m: "1")
+    assert j.citation_precision("No citations here.", {}) is None
+
+
+def test_parse_score_ignores_numbers_that_are_not_scores():
+    assert _parse_score("7/10") is None      # used to read the '1' of '10' as 1.0
+    assert _parse_score("95") is None
+    assert _parse_score("0.9/1.0") == 0.9
