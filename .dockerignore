@@ -10,3 +10,8 @@ data/corpus/
 data/index/
 eval_report.json
 .env
+# local-only working files: git-excluded, and they must not ride along inside a
+# published image either
+CLAUDE.md
+docs/POLISH.md
+.claude/
