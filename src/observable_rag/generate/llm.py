@@ -13,21 +13,29 @@ import os
 
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_GEMINI_MODEL = "gemini-3-flash"
-DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"  # llama-3.3-70b-versatile was retired
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 # Per-provider env names, so a caller can ask "which model would run, and do we
 # even have a key for it?" without constructing a client.
+#
+# judge_models is an ordered preference for the eval judge. The judge only has to
+# be a DIFFERENT MODEL from the generator, not a different provider, so one
+# provider with two models is enough. Chasing a second provider for independence
+# is what landed the judge on a free tier capped at 20 requests a day.
 PROVIDERS = {
     "openai": {"key": "OPENAI_API_KEY", "model_env": "OPENAI_MODEL",
-               "default_model": DEFAULT_OPENAI_MODEL, "base_url": None},
+               "default_model": DEFAULT_OPENAI_MODEL, "base_url": None,
+               "judge_models": ["gpt-4o-mini", "gpt-4.1-mini"]},
     "gemini": {"key": "GEMINI_API_KEY", "model_env": "GEMINI_MODEL",
-               "default_model": DEFAULT_GEMINI_MODEL, "base_url": GEMINI_BASE_URL},
+               "default_model": DEFAULT_GEMINI_MODEL, "base_url": GEMINI_BASE_URL,
+               "judge_models": [DEFAULT_GEMINI_MODEL]},
     "groq": {"key": "GROQ_API_KEY", "model_env": "GROQ_MODEL",
-             "default_model": DEFAULT_GROQ_MODEL, "base_url": GROQ_BASE_URL},
+             "default_model": DEFAULT_GROQ_MODEL, "base_url": GROQ_BASE_URL,
+             "judge_models": [DEFAULT_GROQ_MODEL]},
 }
-DEFAULT_PROVIDER = "gemini"
+DEFAULT_PROVIDER = "openai"
 
 
 def _chat_completer(client, model: str):
@@ -99,26 +107,52 @@ def resolve_judge() -> tuple[str, str, bool]:
     """(provider, model, independent) for the judge.
 
     A judge that is the same model as the generator is grading its own output,
-    which inflates faithfulness in a way no amount of prompting fixes. So unless
-    JUDGE_PROVIDER/JUDGE_MODEL say otherwise, prefer any *other* provider we hold
-    a key for. When there's no second provider available we fall back to the
-    generator's model and report independent=False, so the number is never
-    presented as an independent check when it isn't.
+    which inflates faithfulness in a way no amount of prompting fixes. What it
+    takes to fix that is a different MODEL -- a different provider is one way to
+    get one, not the requirement.
+
+    Preference order:
+
+      1. JUDGE_PROVIDER / JUDGE_MODEL, if set.
+      2. A second model on the generator's own provider. Same key, same billing,
+         nothing extra to configure.
+      3. Another provider we hold a key for.
+      4. The generator's own model, reported as independent=False.
+
+    (2) comes before (3) deliberately. Reaching for a second provider sounds
+    more independent, but in practice it reached for a free tier that ran out
+    mid-run, and a judge that silently stops answering is worse than one that
+    shares a vendor with the generator.
     """
     gen_provider, gen_model = resolve_generation()
 
-    provider = (os.getenv("JUDGE_PROVIDER") or "").lower()
-    if provider and provider not in PROVIDERS:
-        raise ValueError(f"unknown JUDGE_PROVIDER: {provider!r} (use openai, gemini, or groq)")
-    if not provider:
-        provider = next((p for p in PROVIDERS
-                         if p != gen_provider and has_credentials(p)), gen_provider)
+    env_provider = (os.getenv("JUDGE_PROVIDER") or "").lower()
+    env_model = os.getenv("JUDGE_MODEL") or None  # CI renders an unset var as ""
+    if env_provider and env_provider not in PROVIDERS:
+        raise ValueError(
+            f"unknown JUDGE_PROVIDER: {env_provider!r} (use openai, gemini, or groq)")
 
-    meta = PROVIDERS[provider]
-    model = (os.getenv("JUDGE_MODEL")
-             or os.getenv(meta["model_env"])
-             or meta["default_model"])
-    return provider, model, (provider, model) != (gen_provider, gen_model)
+    if env_provider or env_model:
+        provider = env_provider or gen_provider
+        meta = PROVIDERS[provider]
+        model = env_model or os.getenv(meta["model_env"]) or meta["default_model"]
+        return provider, model, (provider, model) != (gen_provider, gen_model)
+
+    # (2) a different model on the provider already in use
+    for candidate in PROVIDERS[gen_provider].get("judge_models", []):
+        if candidate != gen_model:
+            return gen_provider, candidate, True
+
+    # (3) any other provider we have a key for
+    for provider in PROVIDERS:
+        if provider != gen_provider and has_credentials(provider):
+            meta = PROVIDERS[provider]
+            model = os.getenv(meta["model_env"]) or meta["default_model"]
+            if (provider, model) != (gen_provider, gen_model):
+                return provider, model, True
+
+    # (4) nothing else available: say so rather than imply independence
+    return gen_provider, gen_model, False
 
 
 def load_judge_llm():

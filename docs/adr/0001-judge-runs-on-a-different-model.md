@@ -2,6 +2,11 @@
 
 Date: 2026-10-20
 
+> The selection rule here was superseded by
+> [0004](0004-one-provider-two-models.md): the judge now prefers a second model
+> on the generator's own provider rather than a different provider. Why an
+> independent judge is needed, below, still stands.
+
 ## Context
 
 `faithfulness` and `answer_relevance` are graded by an LLM. Until now the judge

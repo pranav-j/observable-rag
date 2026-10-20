@@ -104,11 +104,16 @@ grade. Read the two together: precision tells you whether the surviving
 citations were apt, validity tells you how many survived at all.
 
 **The judge is a different model from the generator.** A model grading its own
-output rates itself generously. `llm.resolve_judge()` picks a provider the
-generator isn't using; `JUDGE_PROVIDER` and `JUDGE_MODEL` override it. When no
-second provider has credentials it falls back to the generator's model and the
-report records `judge.independent: false` — read faithfulness with suspicion
-when you see that.
+output rates itself generously. By default `llm.resolve_judge()` picks a second
+model on whichever provider you're already using, so one API key covers both
+roles; `JUDGE_PROVIDER` and `JUDGE_MODEL` override it. If nothing else is
+available it falls back to the generator's own model and the report records
+`judge.independent: false` — read faithfulness with suspicion when you see that.
+
+Pointing the judge at a free tier does not end well: one run needs roughly 190
+judge calls, against limits of 20 requests/day (Gemini) or 200k tokens/day
+(Groq). The run won't crash, it will report `judge_coverage` below 1.0 and null
+the metric.
 
 **Abstentions are not graded.** An abstention asserts nothing, so "are its
 claims supported" has no answer; scoring it 0 or 1 would be inventing one.

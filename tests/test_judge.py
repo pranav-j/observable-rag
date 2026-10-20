@@ -44,14 +44,37 @@ def _clear(monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
 
-def test_judge_prefers_a_provider_the_generator_is_not_using(monkeypatch):
+def test_judge_uses_a_second_model_on_the_same_provider(monkeypatch):
+    """No second key needed: one provider, two models is enough for independence,
+    and it doesn't route the judge onto someone else's free tier."""
+    _clear(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "o")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5-nano")
+    provider, model, independent = llm.resolve_judge()
+    assert provider == "openai"
+    assert model == "gpt-4o-mini"
+    assert independent is True
+
+
+def test_judge_skips_a_candidate_that_is_the_generator(monkeypatch):
+    _clear(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "o")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-mini")   # the first judge choice
+    provider, model, independent = llm.resolve_judge()
+    assert (provider, model) == ("openai", "gpt-4.1-mini")
+    assert independent is True
+
+
+def test_judge_falls_back_to_another_provider_when_one_model_is_all_there_is(monkeypatch):
     _clear(monkeypatch)
     monkeypatch.setenv("LLM_PROVIDER", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "g")
+    monkeypatch.setenv("GEMINI_MODEL", llm.DEFAULT_GEMINI_MODEL)  # its only candidate
     monkeypatch.setenv("OPENAI_API_KEY", "o")
-    provider, model, independent = llm.resolve_judge()
+    provider, _model, independent = llm.resolve_judge()
     assert provider == "openai"
-    assert model == llm.DEFAULT_OPENAI_MODEL
     assert independent is True
 
 
@@ -59,9 +82,18 @@ def test_judge_falls_back_to_the_generator_and_says_so(monkeypatch):
     _clear(monkeypatch)
     monkeypatch.setenv("LLM_PROVIDER", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "g")        # the only key we hold
+    monkeypatch.setenv("GEMINI_MODEL", llm.DEFAULT_GEMINI_MODEL)
     provider, model, independent = llm.resolve_judge()
     assert (provider, model) == llm.resolve_generation()
     assert independent is False, "a self-grading judge must not claim independence"
+
+
+def test_openai_is_the_default_provider(monkeypatch):
+    """It used to default to gemini, so a missing .env silently routed every
+    call to a free tier capped at 20 requests a day."""
+    _clear(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "o")
+    assert llm.resolve_generation()[0] == "openai"
 
 
 def test_judge_env_overrides_win(monkeypatch):
@@ -169,3 +201,15 @@ def test_retry_delay_honours_the_server_but_caps_it():
     # a daily quota reports hours in a format we deliberately don't parse, so it
     # falls back to the short default and gives up quickly instead of sleeping
     assert _retry_after("Please retry in 19h57m52.8s", default=9) == 9
+
+
+def test_empty_judge_env_vars_do_not_pin_anything(monkeypatch):
+    """CI passes `${{ vars.JUDGE_MODEL }}`, which is "" when the variable isn't
+    set. That must not be read as "pin the judge to the empty model"."""
+    _clear(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "o")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5-nano")
+    monkeypatch.setenv("JUDGE_PROVIDER", "")
+    monkeypatch.setenv("JUDGE_MODEL", "")
+    assert llm.resolve_judge() == ("openai", "gpt-4o-mini", True)

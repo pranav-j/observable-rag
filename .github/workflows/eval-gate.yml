@@ -56,9 +56,9 @@ jobs:
           LLM_PROVIDER: openai
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
-          # A second provider makes the judge independent of the generator. Without
-          # one the run still works, and records judge.independent: false.
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # The judge picks a second OpenAI model by itself, so this one key
+          # covers both roles. Set JUDGE_MODEL as a repo variable to pin it.
+          JUDGE_MODEL: ${{ vars.JUDGE_MODEL }}
 
       - name: Gate on regression vs baseline
         if: steps.secrets.outputs.available == 'true'
