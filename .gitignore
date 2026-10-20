@@ -11,6 +11,9 @@ build/
 data/corpus/*
 !data/corpus/.gitkeep
 eval_report.json
+eval_items.jsonl
 .phoenix/
 data/index/
 data/eval/golden_candidates.jsonl
+data/eval/candidates.jsonl
+data/eval/review_log.jsonl
