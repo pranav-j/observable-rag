@@ -122,7 +122,7 @@ def main() -> int:
         return 0
 
     from .load import DEFAULT_REF  # local: keeps --check from needing httpx
-    ref = args.ref or os.getenv("FASTAPI_REF", DEFAULT_REF)
+    ref = args.ref or os.getenv("FASTAPI_REF") or DEFAULT_REF
     cited = golden_chunk_ids(args.golden)
     manifest = build_manifest(chunks, cited, ref)
     args.manifest.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

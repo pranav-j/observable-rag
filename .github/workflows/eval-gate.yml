@@ -1,6 +1,9 @@
 name: rag-eval-gate
 on: pull_request
 
+# This job needs a paid API key, so it can't run on pull requests from forks.
+# Rather than failing them with a confusing traceback, it checks for the secret
+# up front and skips with an explanation. ci.yml is the check that always runs.
 jobs:
   eval:
     runs-on: ubuntu-latest
@@ -9,16 +12,65 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+
+      - name: Is an API key available?
+        id: secrets
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "$OPENAI_API_KEY" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip notice
+        if: steps.secrets.outputs.available == 'false'
+        run: |
+          {
+            echo "### Eval gate skipped"
+            echo
+            echo "No \`OPENAI_API_KEY\` is available to this run, which is expected"
+            echo "for a pull request from a fork. The eval harness calls a paid API,"
+            echo "so there is nothing to compare against the baseline."
+            echo
+            echo "Lint, unit tests, the chunk-id integrity check and the Docker build"
+            echo "all ran in the \`ci\` workflow and are the gate for this PR."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "no API key available; skipping the eval gate (not a failure)"
+
       - run: pip install -e ".[eval,dev]"
-      - name: Run tests
-        run: pytest -q
+        if: steps.secrets.outputs.available == 'true'
+
       - name: Build the full index from the corpus
+        if: steps.secrets.outputs.available == 'true'
         run: python -m observable_rag.index.build   # full corpus: golden set references chunks across it
+        env:
+          FASTAPI_REF: ${{ vars.FASTAPI_REF }}
+
       - name: Run eval harness
+        if: steps.secrets.outputs.available == 'true'
         run: python eval/evaluate.py --golden data/eval/golden_set.jsonl --out eval_report.json
         env:
           LLM_PROVIDER: openai
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # OPENAI_MODEL: gpt-4o-mini   # uncomment/set if your account needs a specific model
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          # A second provider makes the judge independent of the generator. Without
+          # one the run still works, and records judge.independent: false.
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
       - name: Gate on regression vs baseline
+        if: steps.secrets.outputs.available == 'true'
         run: python eval/ci_gate.py --baseline data/eval/baseline.json --current eval_report.json
+
+      - name: Report
+        if: always() && steps.secrets.outputs.available == 'true'
+        run: |
+          {
+            echo "### Eval gate"
+            echo
+            echo '```'
+            python eval/ci_gate.py --baseline data/eval/baseline.json --current eval_report.json || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

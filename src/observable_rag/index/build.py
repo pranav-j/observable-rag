@@ -49,7 +49,7 @@ def main() -> int:
                          "which is all the chunk-id integrity check needs")
     args = ap.parse_args()
 
-    ref = os.getenv("FASTAPI_REF", DEFAULT_REF)
+    ref = os.getenv("FASTAPI_REF") or DEFAULT_REF
     limit = int(os.getenv("DOC_LIMIT", "0")) or None
 
     url = os.getenv("QDRANT_URL")

@@ -53,19 +53,19 @@ def _chat_completer(client, model: str):
 
 def _load_openai_llm():
     from openai import OpenAI
-    return _chat_completer(OpenAI(), os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL))
+    return _chat_completer(OpenAI(), os.getenv("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL)
 
 
 def _load_gemini_llm():
     from openai import OpenAI  # Gemini via its OpenAI-compatible endpoint
     client = OpenAI(api_key=os.environ.get("GEMINI_API_KEY"), base_url=GEMINI_BASE_URL)
-    return _chat_completer(client, os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL))
+    return _chat_completer(client, os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL)
 
 
 def _load_groq_llm():
     from openai import OpenAI  # Groq via its OpenAI-compatible endpoint
     client = OpenAI(api_key=os.environ.get("GROQ_API_KEY"), base_url=GROQ_BASE_URL)
-    return _chat_completer(client, os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL))
+    return _chat_completer(client, os.getenv("GROQ_MODEL") or DEFAULT_GROQ_MODEL)
 
 
 def _load_default_llm():
@@ -74,7 +74,7 @@ def _load_default_llm():
         "gemini": _load_gemini_llm,
         "groq": _load_groq_llm,
     }
-    provider = os.getenv("LLM_PROVIDER", DEFAULT_PROVIDER).lower()
+    provider = (os.getenv("LLM_PROVIDER") or DEFAULT_PROVIDER).lower()
     if provider not in loaders:
         raise ValueError(f"unknown LLM_PROVIDER: {provider!r} (use openai, gemini, or groq)")
     return loaders[provider]()
@@ -88,7 +88,7 @@ def has_credentials(provider: str) -> bool:
 
 def resolve_generation() -> tuple[str, str]:
     """(provider, model) the RAG pipeline will answer with."""
-    provider = os.getenv("LLM_PROVIDER", DEFAULT_PROVIDER).lower()
+    provider = (os.getenv("LLM_PROVIDER") or DEFAULT_PROVIDER).lower()
     if provider not in PROVIDERS:
         raise ValueError(f"unknown LLM_PROVIDER: {provider!r} (use openai, gemini, or groq)")
     meta = PROVIDERS[provider]

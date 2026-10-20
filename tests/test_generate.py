@@ -101,3 +101,11 @@ def test_chat_completer_retries_without_temperature_then_caches():
     assert "temperature" in calls[0]
     assert "temperature" not in calls[1]
     assert "temperature" not in calls[2]
+
+def test_empty_env_vars_fall_back_to_defaults(monkeypatch):
+    """CI passes `${{ vars.X }}`, which is an EMPTY STRING when the variable
+    isn't set -- not an absent one. getenv's default never fires for those."""
+    monkeypatch.setenv("LLM_PROVIDER", "")
+    monkeypatch.setenv("OPENAI_MODEL", "")
+    assert llm.resolve_generation() == (llm.DEFAULT_PROVIDER,
+                                        llm.PROVIDERS[llm.DEFAULT_PROVIDER]["default_model"])

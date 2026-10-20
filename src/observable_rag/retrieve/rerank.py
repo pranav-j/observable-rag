@@ -15,7 +15,7 @@ import os
 
 from ..ingest.chunk import Chunk
 
-RERANK_MODEL = os.getenv("RERANK_MODEL", "cross-encoder/ms-marco-MiniLM-L6-v2")
+RERANK_MODEL = os.getenv("RERANK_MODEL") or "cross-encoder/ms-marco-MiniLM-L6-v2"
 
 
 def _load_default_scorer():
