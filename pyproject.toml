@@ -11,8 +11,6 @@ dependencies = [
   "fastapi",
   "uvicorn[standard]",
   "pydantic",
-  "pydantic-settings",
-  "pyyaml",
   "httpx",
   "tiktoken",
   "qdrant-client",
@@ -23,7 +21,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-eval = ["ragas", "datasets"]
+# The eval harness deliberately has no extra dependencies: its metrics are
+# stdlib, so they can't break when a fast-moving judge library changes under
+# them. The extra is kept so `pip install -e ".[eval,dev]"` still works.
+eval = []
 dev = ["pytest", "ruff"]
 
 [tool.hatch.build.targets.wheel]

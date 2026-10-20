@@ -88,7 +88,7 @@ class RagSystem(Protocol):
 
 
 class Judge(Protocol):
-    """LLM-as-judge metrics. Wire RAGAS (or your own) behind this interface.
+    """LLM-as-judge metrics. Wire your own implementation in behind this.
 
     Keeping it pluggable means the deterministic retrieval metrics never depend
     on a fast-moving judge library, and you can pin or swap the judge without
