@@ -69,13 +69,20 @@ def build_manifest(chunks: dict[str, str], cited: list[str], ref: str) -> dict:
     }
 
 
-def check_manifest(manifest: dict, chunks: dict[str, str]) -> list[str]:
-    """Return a list of human-readable problems; empty means the contract holds."""
+def check_manifest(manifest: dict, chunks: dict[str, str],
+                   ids_only: bool = False) -> list[str]:
+    """Return a list of human-readable problems; empty means the contract holds.
+
+    ids_only checks existence but not content. A missing id breaks the eval
+    outright and is always a hard failure; drifting text is a softer signal that
+    depends on whether the docs revision is pinned yet, so CI reports the two
+    separately.
+    """
     problems: list[str] = []
     for chunk_id, expected in manifest["cited_chunks"].items():
         if chunk_id not in chunks:
             problems.append(f"{chunk_id}: cited by the golden set but missing from the corpus")
-        elif text_hash(chunks[chunk_id]) != expected:
+        elif not ids_only and text_hash(chunks[chunk_id]) != expected:
             problems.append(
                 f"{chunk_id}: text changed since the golden set was verified "
                 f"({expected} -> {text_hash(chunks[chunk_id])})")
@@ -86,6 +93,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true",
                     help="verify the corpus against the manifest instead of writing it")
+    ap.add_argument("--ids-only", action="store_true",
+                    help="with --check: require the cited ids to EXIST, but don't "
+                         "fail on text drift")
     ap.add_argument("--chunks", type=Path, default=CHUNKS_PATH)
     ap.add_argument("--golden", type=Path, default=GOLDEN_PATH)
     ap.add_argument("--manifest", type=Path, default=MANIFEST_PATH)
@@ -97,7 +107,7 @@ def main() -> int:
 
     if args.check:
         manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
-        problems = check_manifest(manifest, chunks)
+        problems = check_manifest(manifest, chunks, ids_only=args.ids_only)
         for p in problems:
             print(f"  ! {p}")
         if problems:
@@ -105,7 +115,8 @@ def main() -> int:
                   f"{manifest['fastapi_ref']}; re-verify the affected items or rebuild "
                   f"from that revision.")
             return 1
-        print(f"ok: {manifest['n_cited']} cited chunks match the manifest "
+        scope = "exist" if args.ids_only else "match the manifest"
+        print(f"ok: {manifest['n_cited']} cited chunks {scope} "
               f"({manifest['fastapi_ref']})")
         _warn_if_unpinned(manifest["fastapi_ref"])
         return 0

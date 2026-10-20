@@ -2,13 +2,19 @@
 
     python -m observable_rag.index.build
 
+    python -m observable_rag.index.build --chunks-only   # chunks.jsonl only
+
 Env: DOC_LIMIT caps docs (dev/CI), FASTAPI_REF pins the revision, QDRANT_URL points
 at a Qdrant server (else embedded on disk). When using a server we wait for it to be
 ready first, since in a container the DB may still be starting.
+
+FASTAPI_REF defaults to master, which MOVES. Chunk ids are the contract the golden
+set is written against, so a reproducible build needs it set to a tag or sha.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import time
@@ -37,11 +43,17 @@ def _wait_for_qdrant(url: str, timeout: float = 90.0, interval: float = 2.0) -> 
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description="Fetch the corpus and build both indexes.")
+    ap.add_argument("--chunks-only", action="store_true",
+                    help="write chunks.jsonl and stop; skips the embedding model, "
+                         "which is all the chunk-id integrity check needs")
+    args = ap.parse_args()
+
     ref = os.getenv("FASTAPI_REF", DEFAULT_REF)
     limit = int(os.getenv("DOC_LIMIT", "0")) or None
 
     url = os.getenv("QDRANT_URL")
-    if url:
+    if url and not args.chunks_only:
         _wait_for_qdrant(url)
 
     docs = fetch_corpus(ref=ref, limit=limit)
@@ -51,7 +63,11 @@ def main() -> int:
     with CHUNKS_PATH.open("w", encoding="utf-8") as f:
         for c in chunks:
             f.write(json.dumps(c.__dict__) + "\n")
-    print(f"fetched {len(docs)} docs -> {len(chunks)} chunks -> {CHUNKS_PATH}")
+    print(f"fetched {len(docs)} docs -> {len(chunks)} chunks -> {CHUNKS_PATH} (ref: {ref})")
+
+    if args.chunks_only:
+        print("done (chunks only).")
+        return 0
 
     Path("data/index").mkdir(parents=True, exist_ok=True)
     BM25Index().build(chunks).save(BM25_PATH)
