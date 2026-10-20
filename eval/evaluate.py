@@ -53,6 +53,11 @@ from typing import Optional, Protocol, Sequence
 BOOTSTRAP_RESAMPLES = 2000
 BOOTSTRAP_SEED = 20260907
 
+# A judge metric computed from a fraction of the items isn't comparable to a
+# baseline computed from all of them. Below this coverage the metric is reported
+# as null, which the CI gate treats as a failure rather than a skip.
+MIN_JUDGE_COVERAGE = 0.8
+
 
 @dataclass
 class GoldenItem:
@@ -345,6 +350,17 @@ def run_eval(system: RagSystem, items: list[GoldenItem], k: int = 5,
         for idx, (_, res) in enumerate(gradable):
             setattr(res, name, _mean([run[idx] for run in runs]))
 
+    failed = getattr(judge, "failed", 0)
+    if failed:
+        meta = metadata if metadata is not None else {}
+        meta["judge_errors"] = {"failed_calls": failed,
+                                "total_calls": getattr(judge, "calls", None),
+                                "by_type": dict(getattr(judge, "failures", {})),
+                                "first": getattr(judge, "first_error", None)}
+        metadata = meta
+        print(f"! the judge failed {failed} of {getattr(judge, 'calls', '?')} calls")
+        print(f"  first error: {getattr(judge, 'first_error', None)}")
+
     report = _aggregate(results, k=k, judge_runs=per_run, metadata=metadata or {})
     return report, results
 
@@ -385,8 +401,20 @@ def _aggregate(results: list[ItemResult], k: int, judge_runs: list[dict],
     cols = _metric_columns(results)
     latency = [r.latency_ms for r in results if r.latency_ms is not None]
 
-    graded = {name: len(_clean(cols[name]))
-              for name in ("faithfulness", "answer_relevance", "citation_precision")}
+    judge_names = ("faithfulness", "answer_relevance", "citation_precision")
+    graded = {name: len(_clean(cols[name])) for name in judge_names}
+
+    # Gradable = items the judge was actually asked about (abstentions aren't).
+    gradable = sum(1 for r in results if r.answer.strip() and not r.abstained)
+    coverage = {name: round(graded[name] / gradable, 4) if gradable else None
+                for name in judge_names}
+    undercovered = {name for name in judge_names
+                    if graded[name] and gradable
+                    and graded[name] / gradable < MIN_JUDGE_COVERAGE}
+
+    def judge_metric(name: str) -> Optional[float]:
+        """None when too few items were graded to compare against a baseline."""
+        return None if name in undercovered else _mean(cols[name])
 
     by_category: dict[str, dict] = {}
     for qtype in sorted({r.qtype for r in results}):
@@ -401,6 +429,9 @@ def _aggregate(results: list[ItemResult], k: int, judge_runs: list[dict],
             "n_answerable": len(answerable),
             "n_unanswerable": len(unanswerable),
             "judge_graded": graded,
+            "judge_gradable": gradable,
+            "judge_coverage": coverage,
+            "judge_undercovered": sorted(undercovered),
             **metadata,
         },
         "retrieval": {
@@ -410,9 +441,9 @@ def _aggregate(results: list[ItemResult], k: int, judge_runs: list[dict],
             "mrr": _mean(cols["rr"]),
         },
         "generation": {
-            "faithfulness": _mean(cols["faithfulness"]),
-            "answer_relevance": _mean(cols["answer_relevance"]),
-            "citation_precision": _mean(cols["citation_precision"]),
+            "faithfulness": judge_metric("faithfulness"),
+            "answer_relevance": judge_metric("answer_relevance"),
+            "citation_precision": judge_metric("citation_precision"),
         },
         "robustness": {
             "false_answer_rate": _rate([r.false_answer for r in unanswerable]),
@@ -466,6 +497,31 @@ def _build_system() -> tuple[RagSystem, str]:
         print(f"! using stub system ({e}) — wire observable_rag.generate.answer."
               f"RagPipeline for real results")
         return _StubSystem(), "stub"
+
+
+class _ReplaySystem:
+    """Serves answers recorded by a previous run.
+
+    Judge noise is a property of the judge, not the generator, so measuring it
+    shouldn't mean paying to regenerate 26 answers each time. This replays the
+    stored ones so repeated judging is free apart from the judge's own calls.
+    """
+
+    def __init__(self, path: Path):
+        self.by_question = {}
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                self.by_question[row["question"]] = row
+
+    def answer(self, question: str) -> RagOutput:
+        row = self.by_question[question]
+        return RagOutput(answer=row["answer"],
+                         retrieved_chunk_ids=row["retrieved_chunk_ids"],
+                         contexts=row.get("contexts", []),
+                         abstained=row["abstained"],
+                         latency_ms=row.get("latency_ms"),
+                         citations=row.get("citations", []))
 
 
 def _build_judge():
@@ -523,6 +579,9 @@ def main() -> None:
     ap.add_argument("--k", type=int, default=5)
     ap.add_argument("--judge-runs", type=int, default=1,
                     help="grade each answer N times to measure judge noise")
+    ap.add_argument("--rejudge", type=Path, default=None,
+                    help="re-grade the answers in an existing eval_items.jsonl "
+                         "instead of running the pipeline again (no generation cost)")
     ap.add_argument("--no-judge", action="store_true",
                     help="skip the LLM-graded faithfulness / answer-relevance metrics")
     ap.add_argument("--trace", action="store_true",
@@ -534,7 +593,14 @@ def main() -> None:
 
     items = load_golden(args.golden)
     judge = None if args.no_judge else _build_judge()
-    system, system_name = _build_system()
+
+    if args.rejudge:
+        system, system_name = _ReplaySystem(args.rejudge), f"replay:{args.rejudge}"
+        items = [it for it in items if it.question in system.by_question]
+        print(f"replaying {len(items)} stored answers from {args.rejudge} "
+              f"(no generation calls)")
+    else:
+        system, system_name = _build_system()
     metadata = _provenance(system_name, judge is not None, args.judge_runs)
 
     report, results = run_eval(system, items, k=args.k, judge=judge,

@@ -172,3 +172,68 @@ def test_confidence_intervals_are_present_and_ordered(metric):
     ci = report["confidence_intervals"][metric]
     if ci is not None:
         assert ci[0] <= ci[1]
+
+
+# --- judge coverage ----------------------------------------------------------
+
+class _FlakyJudge:
+    """Grades the first `n` calls, then fails the rest — a rate-limited judge."""
+    def __init__(self, n):
+        self.budget = n
+        self.calls = 0
+        self.failures = {}
+        self.first_error = None
+
+    def _spend(self):
+        self.calls += 1
+        if self.budget <= 0:
+            self.failures["RateLimitError"] = self.failures.get("RateLimitError", 0) + 1
+            self.first_error = self.first_error or "RateLimitError: quota"
+            return None
+        self.budget -= 1
+        return 1.0
+
+    @property
+    def failed(self):
+        return sum(self.failures.values())
+
+    def faithfulness(self, q, a, c): return self._spend()
+    def answer_relevance(self, q, a, c): return self._spend()
+
+
+MANY = [GoldenItem(f"q{i}", f"question {i}", "ref", ["a#0"], True, "factual")
+        for i in range(10)]
+
+
+class _AlwaysAnswers:
+    def answer(self, question):
+        return RagOutput(answer=f"Answer [a#0] for {question}.",
+                         retrieved_chunk_ids=["a#0"], contexts=["chunk a"],
+                         citations=["a#0"], latency_ms=5.0)
+
+
+def test_a_rate_limited_judge_nulls_the_metric_instead_of_averaging_survivors():
+    """The real failure this came from: a daily quota ran out after a handful of
+    calls and faithfulness came back 1.0 over 5 of 20 items."""
+    report, _ = run_eval(_AlwaysAnswers(), MANY, k=5, judge=_FlakyJudge(4),
+                         chunk_texts={"a#0": "chunk a"})
+    assert report["generation"]["faithfulness"] is None, \
+        "a metric covering 20% of items must not be reported as a number"
+    assert report["metadata"]["judge_coverage"]["faithfulness"] < 0.8
+    assert "faithfulness" in report["metadata"]["judge_undercovered"]
+
+
+def test_judge_errors_are_recorded_in_the_report():
+    report, _ = run_eval(_AlwaysAnswers(), MANY, k=5, judge=_FlakyJudge(4),
+                         chunk_texts={"a#0": "chunk a"})
+    errors = report["metadata"]["judge_errors"]
+    assert errors["failed_calls"] > 0
+    assert "RateLimitError" in errors["by_type"]
+
+
+def test_full_coverage_still_reports_the_metric():
+    report, _ = run_eval(_AlwaysAnswers(), MANY, k=5, judge=_FlakyJudge(1000),
+                         chunk_texts={"a#0": "chunk a"})
+    assert report["generation"]["faithfulness"] == 1.0
+    assert report["metadata"]["judge_coverage"]["faithfulness"] == 1.0
+    assert report["metadata"]["judge_undercovered"] == []

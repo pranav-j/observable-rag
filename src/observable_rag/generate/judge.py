@@ -25,6 +25,7 @@ on the wrong chunks. Graded per citation, not per answer.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import Optional, Sequence
 
 _FAITHFULNESS_PROMPT = (
@@ -89,6 +90,9 @@ class LLMJudge:
 
     def __init__(self, complete=None):
         self._complete = complete
+        self.calls = 0
+        self.failures: "Counter[str]" = Counter()
+        self.first_error: Optional[str] = None
 
     @property
     def complete(self):
@@ -98,12 +102,28 @@ class LLMJudge:
         return self._complete
 
     def _grade(self, system: str, user: str) -> Optional[float]:
+        """Degrade to None on error, but COUNT it.
+
+        Returning None quietly is how a judge that was rate-limited into
+        uselessness still produced a confident-looking 1.0 over the handful of
+        calls that got through. The caller reads these counters and the eval
+        report carries them, so a dead judge is visible instead of flattering.
+        """
+        self.calls += 1
         try:
             return _parse_score(self.complete(
                 [{"role": "system", "content": system},
                  {"role": "user", "content": user}]))
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            kind = type(e).__name__
+            self.failures[kind] += 1
+            if self.first_error is None:
+                self.first_error = f"{kind}: {str(e)[:300]}"
             return None
+
+    @property
+    def failed(self) -> int:
+        return sum(self.failures.values())
 
     def faithfulness(self, question: str, answer: str,
                      contexts: Sequence[str]) -> Optional[float]:
