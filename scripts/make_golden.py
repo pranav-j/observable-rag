@@ -61,6 +61,13 @@ MIX = {
 }
 GROUNDED = ("factual", "exact_identifier", "paraphrase", "near_miss")
 
+# Pages that aren't documentation of the framework. release-notes alone is 500 of
+# the corpus's 953 chunks, so uniform sampling drew 45% of candidates from the
+# changelog and produced questions like "what translations were added in this
+# batch?" -- answerable, and useless for judging a docs QA system. Excluded from
+# SAMPLING only; they stay in the index and remain retrievable.
+NON_DOC_SOURCES = ("release-notes", "fastapi-people", "newsletter", "management")
+
 # Excerpts are numbered so the model can map answers back to them, and that
 # numbering is an invitation: the first run produced twelve questions beginning
 # "In excerpt 3, what is...". A question that refers to its own source can't be
@@ -198,11 +205,17 @@ def plan_counts(n: int, only: "str | None" = None) -> dict[str, int]:
     return counts
 
 
-def _multi_hop_pairs(chunks: dict, rng: random.Random, m: int) -> list[tuple[str, str]]:
+def eligible_chunk_ids(chunks, exclude: "tuple[str, ...]" = NON_DOC_SOURCES) -> list[str]:
+    """Chunk ids worth drawing an evaluation question from."""
+    return sorted(cid for cid in chunks if cid.split("#")[0] not in exclude)
+
+
+def _multi_hop_pairs(chunks: dict, rng: random.Random, m: int,
+                     exclude: "tuple[str, ...]" = NON_DOC_SOURCES) -> list[tuple[str, str]]:
     """Pairs of chunks from the same page -- the only pairs likely to support an
     honest two-part question."""
     by_source: dict[str, list[str]] = defaultdict(list)
-    for cid in chunks:
+    for cid in eligible_chunk_ids(chunks, exclude):
         by_source[cid.split("#")[0]].append(cid)
     eligible = [sorted(ids) for ids in by_source.values() if len(ids) >= 2]
     rng.shuffle(eligible)
@@ -257,8 +270,8 @@ def _draft_grounded(qtype, chunk_ids, chunks, complete, counter, batch, pause,
 
 
 def _draft_multi_hop(chunks, complete, counter, rng, m, batch, pause,
-                     retries) -> list[dict]:
-    pairs = _multi_hop_pairs(chunks, rng, m)
+                     retries, exclude=NON_DOC_SOURCES) -> list[dict]:
+    pairs = _multi_hop_pairs(chunks, rng, m, exclude)
     rows: list[dict] = []
     total = (len(pairs) + batch - 1) // batch
     for b, start in enumerate(range(0, len(pairs), batch), start=1):
@@ -313,12 +326,13 @@ def _draft_unanswerable(qtype, complete, counter, m, pause, retries) -> list[dic
 
 
 def generate_candidates(chunks, complete, counts: dict[str, int], seed=0,
-                        batch=8, pause=13.0, retries=6) -> list[dict]:
+                        batch=8, pause=13.0, retries=6,
+                        exclude: "tuple[str, ...]" = NON_DOC_SOURCES) -> list[dict]:
     rng = random.Random(seed)
     counter = iter(range(1, 10_000))
     rows: list[dict] = []
 
-    pool = sorted(chunks)
+    pool = eligible_chunk_ids(chunks, exclude)
     rng.shuffle(pool)
     cursor = 0
 
@@ -327,15 +341,44 @@ def generate_candidates(chunks, complete, counts: dict[str, int], seed=0,
         if m <= 0:
             continue
         if qtype in GROUNDED:
-            group, cursor = pool[cursor:cursor + m], cursor + m
-            if not group:
-                _log(f"  ! out of chunks before {qtype}")
-                continue
-            rows += _draft_grounded(qtype, group, chunks, complete, counter,
-                                    batch, pause, retries)
+            # A batch sometimes comes back with fewer objects than excerpts sent
+            # -- one paraphrase batch of 8 returned 1. Top up from fresh chunks
+            # rather than quietly handing over a short category.
+            produced = 0
+            for attempt in range(3):
+                want = m - produced
+                if want <= 0:
+                    break
+                group, cursor = pool[cursor:cursor + want], cursor + want
+                if not group:
+                    _log(f"  ! out of eligible chunks for {qtype}")
+                    break
+                got = _draft_grounded(qtype, group, chunks, complete, counter,
+                                      batch, pause, retries)
+                rows += got
+                produced += len(got)
+                if len(got) < want and attempt < 2:
+                    _log(f"    {qtype}: {produced}/{m}, topping up")
+            if produced < m:
+                _log(f"  ! {qtype} finished short: {produced}/{m}")
         elif qtype == "multi_hop":
-            rows += _draft_multi_hop(chunks, complete, counter, rng, m, batch,
-                                     pause, retries)
+            # The prompt tells the model to omit a pair rather than invent a
+            # two-hop question for chunks that don't support one, so a shortfall
+            # here is it behaving correctly. Offer more pairs instead of pushing.
+            produced = 0
+            for attempt in range(3):
+                want = m - produced
+                if want <= 0:
+                    break
+                got = _draft_multi_hop(chunks, complete, counter, rng,
+                                       want * 2 if attempt else want,
+                                       batch, pause, retries, exclude)
+                rows += got[:want]
+                produced += len(got[:want])
+                if produced < m and attempt < 2:
+                    _log(f"    multi_hop: {produced}/{m}, offering more pairs")
+            if produced < m:
+                _log(f"  ! multi_hop finished short: {produced}/{m}")
         else:
             rows += _draft_unanswerable(qtype, complete, counter, m, pause, retries)
     return rows
@@ -352,6 +395,8 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--batch", type=int, default=8, help="excerpts per request")
     ap.add_argument("--sleep", type=float, default=13.0, help="seconds between requests")
+    ap.add_argument("--exclude-source", nargs="*", default=list(NON_DOC_SOURCES),
+                    help="pages to skip when sampling (default: %(default)s)")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan and the per-category counts, call nothing")
     args = ap.parse_args()
@@ -367,9 +412,12 @@ def main() -> None:
         return
 
     chunks = load_chunks(args.chunks)
-    _log(f"loaded {len(chunks)} chunks; drafting...")
+    eligible = eligible_chunk_ids(chunks, tuple(args.exclude_source))
+    _log(f"loaded {len(chunks)} chunks; {len(eligible)} eligible after excluding "
+         f"{', '.join(args.exclude_source) or 'nothing'}; drafting...")
     rows = generate_candidates(chunks, _load_default_llm(), counts, seed=args.seed,
-                               batch=args.batch, pause=args.sleep)
+                               batch=args.batch, pause=args.sleep,
+                               exclude=tuple(args.exclude_source))
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
