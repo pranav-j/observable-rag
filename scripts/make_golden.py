@@ -78,8 +78,14 @@ _STANDALONE = (
     "N', 'the excerpt', 'the text', 'the passage', 'above', or any other "
     "reference to the source material. "
 )
+# Excerpts are labelled with their real chunk id, and the model echoes that id
+# back, because positional indices did not survive the round trip: questions came
+# back attached to a neighbouring excerpt's number, so "how do I declare form
+# fields" was recorded as answered by deployment/server-workers#5. An id can be
+# checked against the batch; an integer cannot.
 _JSON_SHAPE = ('Return ONLY a JSON array: '
-               '[{"index": <the excerpt number>, "question": "...", "answer": "..."}] '
+               '[{"source": "<the exact SOURCE id of the excerpt, copied '
+               'character for character>", "question": "...", "answer": "..."}] '
                "with one object per excerpt.")
 
 _PROMPTS = {
@@ -136,15 +142,15 @@ def _log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
-def _excerpt_messages(qtype: str, items: list[tuple[int, str]]) -> list[dict]:
-    body = "\n\n".join(f"[{i}]\n{text}" for i, text in items)
+def _excerpt_messages(qtype: str, items: list[tuple[str, str]]) -> list[dict]:
+    body = "\n\n".join(f"SOURCE: {cid}\n{text}" for cid, text in items)
     return [{"role": "system", "content": _PROMPTS[qtype]},
             {"role": "user", "content": body}]
 
 
-def _pair_messages(pairs: list[tuple[int, str, str]]) -> list[dict]:
-    body = "\n\n".join(f"[{i}]\nEXCERPT A:\n{a}\n\nEXCERPT B:\n{b}"
-                       for i, a, b in pairs)
+def _pair_messages(pairs: list[tuple[str, str, str]]) -> list[dict]:
+    body = "\n\n".join(f"SOURCE: {label}\nEXCERPT A:\n{a}\n\nEXCERPT B:\n{b}"
+                       for label, a, b in pairs)
     return [{"role": "system", "content": _MULTI_HOP_PROMPT},
             {"role": "user", "content": body}]
 
@@ -234,7 +240,7 @@ def _draft_grounded(qtype, chunk_ids, chunks, complete, counter, batch, pause,
     total = (len(chunk_ids) + batch - 1) // batch
     for b, start in enumerate(range(0, len(chunk_ids), batch), start=1):
         group = chunk_ids[start:start + batch]
-        items = [(local, chunks[cid].text) for local, cid in enumerate(group)]
+        items = [(cid, chunks[cid].text) for cid in group]
         _log(f"  {qtype} batch {b}/{total} ({len(group)}) -> requesting...")
         before = len(rows)
         try:
@@ -243,9 +249,11 @@ def _draft_grounded(qtype, chunk_ids, chunks, complete, counter, batch, pause,
         except Exception as e:  # noqa: BLE001
             _log(f"  ! {qtype} batch {b} skipped: {e}")
             continue
+        in_batch = set(group)
         for obj in arr:
-            local = obj.get("index")
-            if not isinstance(local, int) or not 0 <= local < len(group):
+            source = str(obj.get("source", "")).strip()
+            if source not in in_batch:
+                _log(f"    ! dropped: source {source!r} is not in this batch")
                 continue
             q = str(obj.get("question", "")).strip()
             a = str(obj.get("answer", "")).strip()
@@ -258,10 +266,10 @@ def _draft_grounded(qtype, chunk_ids, chunks, complete, counter, batch, pause,
                 "id": f"gen{next(counter):03d}",
                 "question": q,
                 "answer": None if near_miss else a,
-                "relevant_chunk_ids": [] if near_miss else [group[local]],
+                "relevant_chunk_ids": [] if near_miss else [source],
                 "answerable": not near_miss,
                 "qtype": qtype,
-                "drafted_from": group[local],
+                "drafted_from": source,
                 "draft_note": a if near_miss else None,
             })
         _log(f"    +{len(rows) - before} (total {len(rows)})")
@@ -276,8 +284,8 @@ def _draft_multi_hop(chunks, complete, counter, rng, m, batch, pause,
     total = (len(pairs) + batch - 1) // batch
     for b, start in enumerate(range(0, len(pairs), batch), start=1):
         group = pairs[start:start + batch]
-        payload = [(local, chunks[a].text, chunks[bb].text)
-                   for local, (a, bb) in enumerate(group)]
+        payload = [(f"{a} + {bb}", chunks[a].text, chunks[bb].text)
+                   for a, bb in group]
         _log(f"  multi_hop batch {b}/{total} ({len(group)}) -> requesting...")
         try:
             arr = _parse_objects(_call(complete, _pair_messages(payload),
@@ -285,9 +293,11 @@ def _draft_multi_hop(chunks, complete, counter, rng, m, batch, pause,
         except Exception as e:  # noqa: BLE001
             _log(f"  ! multi_hop batch {b} skipped: {e}")
             continue
+        by_label = {f"{a} + {bb}": (a, bb) for a, bb in group}
         for obj in arr:
-            local = obj.get("index")
-            if not isinstance(local, int) or not 0 <= local < len(group):
+            label = str(obj.get("source", "")).strip()
+            if label not in by_label:
+                _log(f"    ! dropped: source {label!r} is not in this batch")
                 continue
             q = str(obj.get("question", "")).strip()
             a = str(obj.get("answer", "")).strip()
@@ -295,9 +305,9 @@ def _draft_multi_hop(chunks, complete, counter, rng, m, batch, pause,
                 continue
             rows.append({
                 "id": f"gen{next(counter):03d}", "question": q, "answer": a,
-                "relevant_chunk_ids": list(group[local]),
+                "relevant_chunk_ids": list(by_label[label]),
                 "answerable": True, "qtype": "multi_hop",
-                "drafted_from": " + ".join(group[local]), "draft_note": None,
+                "drafted_from": label, "draft_note": None,
             })
         time.sleep(pause)
     return rows

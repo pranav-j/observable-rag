@@ -24,3 +24,4 @@
 {"id": "una05", "question": "Does FastAPI have a built-in scheduler for cron-style recurring jobs?", "answer": null, "relevant_chunk_ids": [], "answerable": false, "qtype": "unanswerable"}
 {"id": "una06", "question": "Does FastAPI provide a built-in WebSocket pub/sub message broker?", "answer": null, "relevant_chunk_ids": [], "answerable": false, "qtype": "unanswerable"}
 {"id": "una07", "question": "Does FastAPI expose a built-in Prometheus metrics endpoint?", "answer": null, "relevant_chunk_ids": [], "answerable": false, "qtype": "unanswerable"}
+{"id": "q001", "question": "What command starts the FastAPI development server and where will it be accessible during development?", "answer": "Run 'fastapi dev' to start the development server; it will be accessible at http://127.0.0.1:8000 and the docs at http://127.0.0.1:8000/docs.", "relevant_chunk_ids": ["fastapi-cli#1"], "answerable": true, "qtype": "factual", "verified_by": "human"}

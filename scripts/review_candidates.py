@@ -65,6 +65,24 @@ def _append_jsonl(path: Path, row: dict) -> None:
         f.write(("\n" if needs_newline else "") + json.dumps(row) + "\n")
 
 
+def question_key(text: str) -> str:
+    """Stable identity for a candidate: its question, normalised.
+
+    NOT the gen0NN id. Those are assigned by position and get renumbered every
+    time candidates are redrafted, so a log keyed on them starts skipping
+    questions you have never seen while re-asking ones you already decided.
+    """
+    return " ".join((text or "").lower().split())
+
+
+def decided_questions(log: list[dict], golden: list[dict]) -> set[str]:
+    """Everything already ruled on: logged decisions plus anything in the golden
+    set, so an accepted item is never offered twice even if the log is lost."""
+    seen = {question_key(d["question"]) for d in log if d.get("question")}
+    seen |= {question_key(g["question"]) for g in golden if g.get("question")}
+    return seen
+
+
 def next_golden_id(golden: list[dict]) -> str:
     """Continue the q0NN sequence rather than reusing the draft's gen0NN id."""
     used = [int(g["id"][1:]) for g in golden
@@ -128,6 +146,18 @@ def _show(item: dict, chunks: dict, index: int, total: int, full: bool) -> None:
     print(f"{BOLD}[{index}/{total}]{RESET}  {DIM}{item.get('id')}{RESET}  "
           f"{YELLOW}{item.get('qtype')}{RESET}  "
           f"{'answerable' if item.get('answerable') else 'UNANSWERABLE'}")
+
+    # A machine pre-read, to point attention at the ones that need it. It is a
+    # suggestion from a model that did not write this candidate -- not a check
+    # that has happened. Accepting is still yours.
+    pre = item.get("prereview")
+    if pre:
+        colour = {"keep": GREEN, "weak": YELLOW, "drop": RED}.get(
+            pre.get("verdict"), DIM)
+        print(f"\n  {colour}machine read: {pre.get('verdict', '?')}{RESET} "
+              f"{DIM}-- {pre.get('reason', '')}{RESET}")
+        print(f"  {DIM}({pre.get('checked_by', 'unknown checker')}; "
+              f"not verification){RESET}")
     print(f"\n{BOLD}Q:{RESET} {_wrap(item.get('question', ''))}")
     if item.get("answer"):
         print(f"\n{BOLD}A:{RESET} {_wrap(item['answer'])}")
@@ -152,6 +182,10 @@ def main() -> int:
     ap.add_argument("--log", type=Path, default=REVIEW_LOG)
     ap.add_argument("--chunks", default=CHUNKS)
     ap.add_argument("--only", help="review a single qtype")
+    ap.add_argument("--verdict", choices=("keep", "weak", "drop"),
+                    help="only candidates the pre-read gave this verdict")
+    ap.add_argument("--order", choices=("file", "best-first", "worst-first"),
+                    default="file", help="sort by the pre-read verdict")
     args = ap.parse_args()
 
     candidates = _read_jsonl(args.candidates)
@@ -159,15 +193,23 @@ def main() -> int:
         print(f"no candidates in {args.candidates}; run scripts/make_golden.py first")
         return 1
 
-    decided = {d["candidate_id"] for d in _read_jsonl(args.log)}
-    queue = [c for c in candidates if c.get("id") not in decided
-             and (not args.only or c.get("qtype") == args.only)]
+    log = _read_jsonl(args.log)
+    golden = _read_jsonl(args.golden)
+    decided = decided_questions(log, golden)
+    queue = [c for c in candidates if question_key(c.get("question", "")) not in decided
+             and (not args.only or c.get("qtype") == args.only)
+             and (not args.verdict
+                  or (c.get("prereview") or {}).get("verdict") == args.verdict)]
+    if args.order != "file":
+        rank = {"keep": 0, "weak": 1, "drop": 2}
+        queue.sort(key=lambda c: rank.get(
+            (c.get("prereview") or {}).get("verdict"), 1),
+            reverse=args.order == "worst-first")
     if not queue:
         print(f"nothing left to review ({len(decided)} already decided)")
         return 0
 
     chunks = load_chunks(args.chunks)
-    golden = _read_jsonl(args.golden)
     print(f"{len(queue)} to review, {len(decided)} already decided. {HELP}")
 
     accepted = rejected = skipped = 0
@@ -196,7 +238,9 @@ def main() -> int:
                 skipped += 1
                 break
             if key == "r":
-                _append_jsonl(args.log, {"candidate_id": cand["id"], "decision": "reject"})
+                _append_jsonl(args.log, {"candidate_id": cand["id"],
+                                         "question": cand["question"],
+                                         "decision": "reject"})
                 rejected += 1
                 break
             if key in ("a", "e"):
@@ -223,6 +267,7 @@ def main() -> int:
                 _append_jsonl(args.golden, entry)
                 golden.append(entry)
                 _append_jsonl(args.log, {"candidate_id": cand["id"],
+                                         "question": cand["question"],
                                          "decision": "accept",
                                          "golden_id": entry["id"]})
                 accepted += 1

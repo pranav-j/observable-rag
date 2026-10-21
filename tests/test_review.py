@@ -60,3 +60,26 @@ def test_append_creates_the_file_when_missing(tmp_path):
     path = tmp_path / "new.jsonl"
     _append_jsonl(path, {"id": "q001"})
     assert json.loads(path.read_text())["id"] == "q001"
+
+
+def test_decisions_survive_candidates_being_renumbered():
+    """gen0NN ids are positional and change on every redraft. A log keyed on
+    them skips questions you have never seen and re-asks ones you decided."""
+    from review_candidates import decided_questions, question_key
+
+    log = [{"candidate_id": "gen001", "question": "What starts the dev server?",
+            "decision": "accept", "golden_id": "q001"}]
+    golden = [{"id": "q001", "question": "What starts the dev server?"}]
+    decided = decided_questions(log, golden)
+
+    # same question, new id after a redraft -> still decided
+    assert question_key("what   starts the DEV server?") in decided
+    # a different question that inherited the old id -> not decided
+    assert question_key("How do I access HTTP status codes?") not in decided
+
+
+def test_accepted_items_are_decided_even_without_a_log():
+    from review_candidates import decided_questions, question_key
+
+    golden = [{"id": "q001", "question": "Already in the golden set"}]
+    assert question_key("already in the golden set") in decided_questions([], golden)

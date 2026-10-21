@@ -1,12 +1,13 @@
 {
   "fastapi_ref": "master",
   "n_chunks": 953,
-  "n_cited": 21,
+  "n_cited": 22,
   "cited_chunks": {
     "advanced/security/http-basic-auth#2": "76720bc08ddaf002",
     "advanced/settings#4": "4d82f3ad4c4358f9",
     "alternatives#8": "750214a17c3123fc",
     "deployment/https#2": "7af2ba27b284ccc1",
+    "fastapi-cli#1": "1df8f7e756d08ed8",
     "how-to/migrate-from-pydantic-v1-to-pydantic-v2#0": "0184133216a93bd9",
     "index#6": "acee7b17bce7dee2",
     "reference/httpconnection#0": "0c89524c9862c201",
