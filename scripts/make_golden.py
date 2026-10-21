@@ -61,6 +61,16 @@ MIX = {
 }
 GROUNDED = ("factual", "exact_identifier", "paraphrase", "near_miss")
 
+# Excerpts are numbered so the model can map answers back to them, and that
+# numbering is an invitation: the first run produced twelve questions beginning
+# "In excerpt 3, what is...". A question that refers to its own source can't be
+# asked of a retrieval system, so every grounded prompt repeats this rule.
+_STANDALONE = (
+    "Each question must stand completely on its own, as if typed into a search "
+    "box by someone who has never seen these excerpts. NEVER write 'in excerpt "
+    "N', 'the excerpt', 'the text', 'the passage', 'above', or any other "
+    "reference to the source material. "
+)
 _JSON_SHAPE = ('Return ONLY a JSON array: '
                '[{"index": <the excerpt number>, "question": "...", "answer": "..."}] '
                "with one object per excerpt.")
@@ -70,25 +80,26 @@ _PROMPTS = {
         "You are writing evaluation questions for a documentation QA system. For "
         "EACH numbered excerpt below, write one clear, natural, standalone question "
         "that the excerpt fully answers, plus a concise reference answer (1-2 "
-        "sentences). Do not refer to 'the excerpt' or 'the text'. " + _JSON_SHAPE),
+        "sentences). " + _STANDALONE + _JSON_SHAPE),
     "exact_identifier": (
         "For EACH numbered excerpt, write one question about a LITERAL identifier "
         "that appears in it -- a parameter, decorator, class, or function name such "
-        "as status_code or Depends. The question must name that identifier exactly. "
-        "Add a concise reference answer. " + _JSON_SHAPE),
+        "as status_code or Depends. The question must name that identifier exactly, "
+        "the way someone would who already knew the name and wanted to know what it "
+        "does. Add a concise reference answer. " + _STANDALONE + _JSON_SHAPE),
     "paraphrase": (
         "For EACH numbered excerpt, write one question it answers, using everyday "
         "wording that AVOIDS the excerpt's own technical vocabulary. If the excerpt "
         "says 'dependency injection', ask about 'sharing setup code between "
         "endpoints'. The question must still be answerable from the excerpt. Add a "
-        "concise reference answer. " + _JSON_SHAPE),
+        "concise reference answer. " + _STANDALONE + _JSON_SHAPE),
     "near_miss": (
         "For EACH numbered excerpt, write one question that is CLOSELY RELATED to "
         "its topic and uses similar vocabulary, but that the excerpt does NOT "
         "answer -- a neighbouring detail it never states. These test whether a "
         "retrieval system can tell 'looks relevant' from 'contains the answer'. "
         'Set "answer" to a short note on why the excerpt does not answer it. '
-        + _JSON_SHAPE),
+        + _STANDALONE + _JSON_SHAPE),
 }
 
 _MULTI_HOP_PROMPT = (
@@ -96,7 +107,8 @@ _MULTI_HOP_PROMPT = (
     "numbered PAIR of excerpts below, write one question that genuinely needs BOTH "
     "excerpts to answer -- not one that either answers alone. Add a concise "
     "reference answer that draws on both. If no honest two-part question connects "
-    "the pair, omit that index entirely rather than inventing one. " + _JSON_SHAPE)
+    "the pair, omit that index entirely rather than inventing one. "
+    + _STANDALONE + _JSON_SHAPE)
 
 _UNANSWERABLE_PROMPTS = {
     "unanswerable_in_domain": (
