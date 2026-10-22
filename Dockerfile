@@ -24,7 +24,13 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/opt/models \
     HF_HUB_DISABLE_TELEMETRY=1
 
-# Dependencies first, so edits to the app don't reinstall torch.
+# CPU-only torch, explicitly, BEFORE the package pulls the default wheel.
+# PyPI's torch bundles the NVIDIA CUDA runtime -- 3.3GB of it -- which is dead
+# weight on a Graviton instance with no GPU. Installing from PyTorch's cpu index
+# first means the editable install below finds the requirement already met.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+# Dependencies next, so edits to the app don't reinstall any of it.
 COPY pyproject.toml ./
 COPY src ./src
 RUN pip install --no-cache-dir -e .

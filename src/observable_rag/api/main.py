@@ -27,6 +27,13 @@ from .limits import (
     too_long_message,
 )
 
+# Without this the app's own log lines vanish: uvicorn configures its own
+# loggers and leaves everyone else's without a handler, so the rate-limit and
+# answer records never reached the container log.
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 log = logging.getLogger("observable_rag.api")
 
 _pipeline: "RagPipeline | None" = None

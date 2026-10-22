@@ -12,10 +12,16 @@ Measuring the container first changed that answer.
 
 | what | measured |
 | --- | --- |
-| image size | 3.6 GB, almost all PyTorch |
+| image size | 10.5 GB as first built, of which 3.3 GB was CUDA (see below) |
 | resident memory, warm | **638 MB** (both models, index, after queries) |
 | retrieval, warm | ~270 ms p50 |
 | end-to-end p50 | ~13 s, almost entirely the LLM call |
+
+The image size is worth a note of its own. The first build came out at 10.5 GB,
+and 3.3 GB of that was `nvidia/` — PyPI's default torch wheel bundles the CUDA
+runtime, which is dead weight on a Graviton instance with no GPU. Installing
+torch from PyTorch's CPU index instead (159 MB for the aarch64 wheel, against
+959 MB plus the CUDA packages) removes it.
 
 Scale-to-zero means every cold request pays the startup cost: process start,
 ~180 MB of model weights loaded, index opened. For a demo whose entire point is
@@ -23,8 +29,9 @@ showing a fast, observable pipeline, a visitor's first question is the worst
 possible moment to pay that. The one thing serverless is good at — being idle
 cheaply — is precisely what hurts here.
 
-Lambda is additionally impractical: a 3.6 GB image's cold start would very
-likely exceed API Gateway's 29-second limit.
+Lambda is additionally impractical: a multi-gigabyte image's cold start would
+very likely exceed API Gateway's 29-second limit, and Lambda caps image size at
+10 GB — which the first build exceeded outright.
 
 AWS has no container service that scales to zero *and* starts fast. App Runner
 and Fargate both keep an instance warm, so they cost like a small VM while
@@ -63,17 +70,18 @@ quoted prices).
 - **Cloud Run.** The original plan. Genuinely good at idle cost, and the
   measurements turned its main advantage into its main drawback. Also a second
   cloud account to hold.
-- **Lambda container.** The only AWS option with true scale-to-zero. A 3.6 GB
-  cold start against a 29-second gateway timeout is not a demo.
+- **Lambda container.** The only AWS option with true scale-to-zero. A
+  multi-gigabyte cold start against a 29-second gateway timeout is not a demo.
 - **App Runner / Fargate.** Managed, no scale-to-zero, and more expensive than
   the VM they are running on. Worth revisiting if this ever needs to scale.
 - **Co-host on an existing box.** Cheapest option — marginal cost near zero.
   Rejected for a portfolio piece: a separate instance gets its own URL and its
   own failure domain, and cannot take anything else down.
-- **Shrink the image with ONNX instead of PyTorch.** Plausibly under 1 GB and a
-  few hundred MB of memory, which would put `t4g.micro` (~$8/month) in reach.
-  That is a model change: it needs the eval re-run and the numbers to hold
-  before adopting. Deliberately not bundled into a deployment decision.
+- **Shrink the image further with ONNX instead of PyTorch.** Dropping the CUDA
+  packages was free — same wheels, same numerics, no model change. Going further
+  to ONNX Runtime would cut more, and would put `t4g.micro` (~$8/month) in
+  reach, but it is a model change: it needs the eval re-run and the numbers to
+  hold first. Deliberately not bundled into a deployment decision.
 
 ## Consequences
 
