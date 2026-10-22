@@ -1,88 +1,78 @@
-# CI gate margins: proposal
+# CI gate margins
 
-**Status: proposed, not applied.** `eval/ci_gate.py` still carries the original
-margins. Nothing here is live until it's reviewed.
+**Status: applied.** These are the margins in `eval/ci_gate.py`, sized against
+the 104-question golden set (78 answerable, 26 unanswerable) and the baseline in
+`data/eval/baseline.json`.
 
 The gate fails a pull request when a metric moves in the worse direction by more
-than its margin, relative to `data/eval/baseline.json`. The margins have never
-been checked against the size of the golden set or against measured run-to-run
-noise, and two of them are currently unusable.
+than its margin, relative to the baseline. What follows is how each number was
+chosen and what was wrong with the ones it replaced.
 
-## What's wrong now
+## Applied margins
 
-With 20 answerable and 6 unanswerable items, one item flipping moves a metric by
-a fixed, large amount. Against the committed baseline:
+| metric | old | now | sized as |
+| --- | --- | --- | --- |
+| `recall_at_5` | 0.03 | 0.03 | absorbs 2 questions of 78 |
+| `all_relevant_at_5` | ungated | 0.03 | absorbs 2 of 78 |
+| `context_precision_at_5` | 0.03 | 0.03 | unchanged |
+| `mrr` | ungated | 0.05 | absorbs 3 of 78 |
+| `faithfulness` | 0.03 | 0.05 | placeholder — see below |
+| `answer_relevance` | 0.03 | 0.05 | placeholder |
+| `citation_precision` | ungated | 0.05 | placeholder |
+| `citation_validity` | ungated | 0.05 | placeholder |
+| `false_answer_rate` | 0.02 | 0.10 | absorbs 2 of 26, fails on 3 |
+| `false_abstention_rate` | ungated | 0.10 | absorbs 7 of 78 |
+| `latency_ms.p95` | 150 ms | 15000 ms | measured spread — see below |
 
-| metric | margin | baseline | one item is worth | effect |
-| --- | --- | --- | --- | --- |
-| `recall_at_5` | 0.03 | 0.900 | 0.050 | any single item regressing fails |
-| `context_precision_at_5` | 0.03 | 0.190 | 0.010 | absorbs one item |
-| `faithfulness` | 0.03 | 0.993 | 0.050 | any single item regressing fails |
-| `answer_relevance` | 0.03 | 1.000 | 0.050 | any single item regressing fails |
-| `false_answer_rate` | 0.02 | 0.167 | 0.167 | any single item regressing fails |
-| `latency_ms.p95` | 150 ms | 30518 ms | — | 0.49% tolerance |
+Eleven metrics are gated, up from six. `false_abstention_rate` matters
+particularly: without it the gate can be satisfied by abstaining more often.
 
-Two specific problems:
+## What was wrong with the old margins
 
-**The latency gate is broken.** A 150 ms margin on a p95 of 30.5 seconds is a
-0.49% tolerance on a number dominated by someone else's API. Running the
-committed gate against the last local report — identical code, every other
-metric flat or better — fails:
+They had never been checked against the size of the golden set. With 20
+answerable and 6 unanswerable items, one question flipping moved a metric by a
+large fixed amount:
+
+| metric | margin | one question was worth | effect |
+| --- | --- | --- | --- |
+| `recall_at_5` | 0.03 | 0.050 | any single regression failed |
+| `faithfulness` | 0.03 | 0.050 | any single regression failed |
+| `answer_relevance` | 0.03 | 0.050 | any single regression failed |
+| `false_answer_rate` | 0.02 | 0.167 | any change at all failed |
+| `latency_ms.p95` | 150 ms | — | 0.49% tolerance on a 30s metric |
+
+The latency gate was the worst of these. Run against a report from identical
+code with every other metric flat or better, it failed:
 
 ```
 latency_ms.p95   30517.960  34805.660  +4287.700  FAIL
 ```
 
-That is a 14% swing between two runs of the same system. The gate as committed
-is red on provider variance alone.
-
-**`false_answer_rate` has a six-item denominator.** It can only take the values
-0, 0.167, 0.333 … so a 0.02 margin means any change at all fails. The committed
-baseline is already 0.167 — one of the six unanswerable questions got answered.
+A 14% swing between two runs of the same system. The gate was red on provider
+variance alone.
 
 ## What is and isn't noisy
 
-Worth separating, because it changes what a margin is *for*:
+This is what decides whether a margin is absorbing noise or hiding a regression:
 
-- **`recall_at_5`, `all_relevant_at_5`, `context_precision_at_5`, `mrr`** are
-  deterministic. Given the same index and the same code they return the same
-  number every time. Their only source of run-to-run variation is the corpus
-  changing underneath them — which is drift, not noise, and the fix is pinning
-  the docs revision, not widening a margin.
+- **`recall_at_5`, `all_relevant_at_5`, `context_precision_at_5`, `mrr`,
+  `citation_validity`** are deterministic. Given the same index and the same
+  code they return the same number every time. Their only run-to-run movement is
+  the corpus changing underneath them — which is drift, and the fix is pinning
+  the docs revision, not widening a margin. They stay tight on purpose: a margin
+  below one-question granularity means "any regression fails", which is correct
+  when there is no noise to absorb.
 - **`faithfulness`, `answer_relevance`, `citation_precision`** are graded by a
-  model and genuinely vary run to run. Their margins should come from measuring
-  that variation.
-- **`latency_ms`** end-to-end is mostly provider latency, which no pull request
-  controls.
+  model, and vary with *regeneration* rather than with the judge itself.
+- **`latency_ms`** end-to-end is mostly the provider's latency, which no pull
+  request controls.
 
-## Proposed margins
+## The judge margins are placeholders, not measurements
 
-| metric | current | proposed | reasoning |
-| --- | --- | --- | --- |
-| `recall_at_5` | 0.03 | **0.03** | deterministic; keep it tight. Requires the docs revision to be pinned, or corpus drift trips it |
-| `all_relevant_at_5` | — | **0.03** | add; the metric that matters for multi-hop |
-| `context_precision_at_5` | 0.03 | **0.03** | unchanged |
-| `mrr` | ungated | **0.05** | add; it's a README headline and nothing currently guards it |
-| `faithfulness` | 0.03 | **0.05, provisionally** | judge replay is deterministic, so repeats measure nothing — see below |
-| `answer_relevance` | 0.03 | **0.05, provisionally** | same |
-| `citation_precision` | — | **0.05, provisionally** | same |
-| `citation_validity` | — | **0.05** | add; deterministic, and currently 0.561 |
-| `false_answer_rate` | 0.02 | **0.10** | with ~16 unanswerable items one flip is 0.0625; 0.10 absorbs one, fails on two |
-| `false_abstention_rate` | ungated | **0.10** | add; otherwise the gate can be passed by abstaining more |
-| `latency_ms.p95` | 150 ms | **ungate** | replace with retrieval-stage latency once per-stage timings exist |
-
-Two notes on that table.
-
-**The retrieval margins stay tight on purpose.** A margin below the one-item
-granularity means "any regression fails", and for a deterministic metric that is
-the correct setting — there is no noise for it to absorb. It only becomes a
-problem when the corpus moves under the baseline, which is a separate fix.
-
-**The judge margins are provisional, because repeating the judge measured
-nothing.** The plan was to take 3× the standard deviation across repeated judge
+The plan was to set them to 3× the standard deviation across repeated judge
 runs. That run happened — `reports/judge_noise_2026-10-20.json`, three passes
-over the same stored answers with `gpt-4o-mini` judging a `gpt-5-nano`
-generator, full coverage, no errors:
+over the same stored answers, `gpt-4o-mini` judging a `gpt-5-nano` generator,
+full coverage, no errors:
 
 | metric | mean | min | max | stdev |
 | --- | --- | --- | --- | --- |
@@ -90,60 +80,53 @@ generator, full coverage, no errors:
 | `answer_relevance` | 1.0000 | 1.0000 | 1.0000 | **0.0000** |
 | `citation_precision` | 0.9062 | 0.9062 | 0.9062 | **0.0000** |
 
-Zero variance, three times out of three. That isn't a stable metric — it's a
-deterministic one. The judge runs at `temperature=0` over identical stored
-answers, so the three passes are the same computation performed three times.
-3 × 0 = 0 is not a usable margin.
+Zero variance, three times out of three — because at `temperature=0` over
+identical stored answers the judge is deterministic. The three passes are the
+same computation performed three times, and 3 × 0 is not a usable margin.
 
 A trap worth naming: an earlier attempt on a rate-limited provider *did* show
 spread (`citation_precision` 0.8846–0.9062). That was not judge noise. Different
-calls were dropped on each pass, so the metric's denominator changed between
-runs. Apparent noise from a degraded run is easy to mistake for the real thing,
-which is why the report now carries `judge_coverage` and `judge_errors`.
+calls were dropped on each pass, so the metric's denominator moved between runs.
+Apparent noise from a degraded run looks exactly like the real thing, which is
+why the report now carries `judge_coverage` and `judge_errors`.
 
-So the variance a margin needs to absorb isn't in the judge at all — it's in
-**regeneration**. Measuring it means N full runs (generate *and* judge), not N
-judge passes over one set of answers, at roughly $0.05 a run. Until that
-happens, 0.05 is a deliberate placeholder: wide enough to absorb one item
-flipping on a 20-item denominator, narrow enough to catch a collapse. It is not
-a measured number and shouldn't be described as one.
+So the variance these margins must absorb is in **regeneration**, not judging.
+Measuring it needs N full runs — generate *and* judge, about $0.07 each — not N
+judge passes over one set of answers. Until that happens, 0.05 is a stated guess
+sized to absorb roughly four questions. It should not be described as measured.
 
-**Ungating latency is not the same as ignoring it.** End-to-end p95 is worth
-reporting and watching; it just isn't something a pull request can be
-responsible for when the LLM call is 95% of it. Per-stage retrieval latency —
-embed, dense search, BM25, fusion, rerank — is local, deterministic, and worth
-gating. Those spans don't exist separately yet.
+## Latency keeps a loose gate rather than none
 
-## A new candidate: `citation_validity`
+An earlier draft of this document proposed removing the latency gate entirely.
+Four runs since then give a measured spread instead of a guess: p95 between
+30.5s and 43.3s on near-identical code, a 12.8s range. A 15s margin absorbs that
+while still catching a doubling, which is strictly better than removing the
+check and leaving a genuine blow-up undetected.
 
-The same run turned up a failure nothing was measuring. `citation_validity` is
-the share of the model's citation *attempts* that name a chunk actually
-retrieved. On the current golden set (`reports/citations_2026-10-20.json`):
+End-to-end p95 is still mostly the provider's latency. Per-stage retrieval
+latency — embed, dense search, BM25, fusion, rerank — is local and deterministic
+and is the right thing to gate. Those spans don't exist separately yet;
+`hybrid_search` is still a single span.
 
-**0.561 — 23 of 41 citation attempts resolved; 18 were fabricated**, across 6 of
-the 20 answered questions.
+## `citation_validity`
 
-The invented ones are all the same shape: Markdown heading anchors rather than
-chunk indices — `tutorial/middleware#adding-asgi-middlewares` where the scheme
-is `tutorial/middleware#3`. They were being discarded during parsing, so an
-answer citing two invented chunks looked identical to one citing nothing, and
-`citation_precision` never saw them because there was nothing left to grade.
-That is why `citation_precision` reads 0.906 while barely half the citations the
-model emitted were real.
+Added after a run showed the model emitting citation tags that look like
+documentation heading anchors (`tutorial/middleware#adding-asgi-middlewares`)
+rather than chunk ids (`tutorial/middleware#3`). Parsing discarded them, so an
+answer citing two invented chunks was indistinguishable from one citing nothing,
+and `citation_precision` never saw them because nothing survived to grade.
 
-It's deterministic and it's cheap, so it belongs in the gate. Note that fixing
-the underlying prompt would move it sharply, which is a change to the system
-being evaluated and needs its own baseline.
+It measures the share of citation *attempts* that name a retrieved chunk. On the
+run that found it, 0.561 — 18 of 41 attempts fabricated. After the generation
+prompt was rewritten to spell out the format, 1.000 on that set and 0.944 on the
+current 104 questions. Deterministic and cheap, so it is gated.
 
-## Dependencies
+## Still outstanding
 
-Two things have to land before these can be applied honestly:
+**Pin the docs revision.** `FASTAPI_REF` still defaults to `master`. Until it
+names a tag or commit, the corpus moves under the baseline and the deterministic
+retrieval metrics drift for reasons unrelated to any code change. The manifest
+check reports it, but these margins assume a fixed corpus.
 
-1. **Pin the docs revision.** Until `FASTAPI_REF` names a tag or commit, the
-   corpus changes under the baseline and the deterministic metrics drift for
-   reasons unrelated to any code change.
-2. **Measure judge noise.** One `--judge-runs 3` run on the current golden set
-   fills in the three blank margins.
-
-Both also want the larger golden set, which moves every denominator in the first
-table and is the single biggest improvement available to the gate.
+**Replace the four judge placeholders with a measurement**, from repeated full
+runs rather than repeated judge passes.
