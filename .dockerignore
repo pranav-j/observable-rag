@@ -1,3 +1,5 @@
+# The index is built inside the image, so the host's copies are not needed;
+# they are excluded below so a stale local build never ships by accident.
 .venv/
 venv/
 __pycache__/
@@ -6,12 +8,15 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.egg-info/
-data/corpus/
-data/index/
 eval_report.json
+eval_items.jsonl
+reports/
+.github/
 .env
 # local-only working files: git-excluded, and they must not ride along inside a
 # published image either
 CLAUDE.md
 docs/POLISH.md
 .claude/
+data/corpus/
+data/index/
