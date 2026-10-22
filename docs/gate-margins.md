@@ -91,9 +91,24 @@ Apparent noise from a degraded run looks exactly like the real thing, which is
 why the report now carries `judge_coverage` and `judge_errors`.
 
 So the variance these margins must absorb is in **regeneration**, not judging.
-Measuring it needs N full runs — generate *and* judge, about $0.07 each — not N
-judge passes over one set of answers. Until that happens, 0.05 is a stated guess
-sized to absorb roughly four questions. It should not be described as measured.
+
+There is now one measurement of it. The same prompt, over the same 26
+unanswerable questions, run twice:
+
+| run | `false_answer_rate` | questions answered |
+| --- | --- | --- |
+| `reports/eval_104_prompt_v3.json` | 0.3077 | 8 of 26 |
+| the same prompt on a 40-question subset | 0.2308 | 6 of 26 |
+
+**A spread of 0.077 from identical code** — two questions flipping between runs
+at `temperature=0`, because the generator is not actually deterministic. That is
+the number the judge margins were missing, and it is large: the 0.10 margin on
+`false_answer_rate` absorbs barely more than one noise-width.
+
+It also sets the bar for believing a change. A prompt revision that moved
+`false_answer_rate` by 0.0385 moved it by half the noise, which is not evidence
+of anything. The 0.05 judge margins remain stated guesses rather than
+measurements, but they are now at least the right order of magnitude.
 
 ## Latency keeps a loose gate rather than none
 
