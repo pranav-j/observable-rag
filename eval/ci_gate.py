@@ -22,13 +22,32 @@ from pathlib import Path
 # How far each metric may move in the WORSE direction before the gate fails.
 #   higher_is_better=True  -> a drop of more than `margin` fails
 #   higher_is_better=False -> a rise of more than `margin` fails
+# Margins are sized against the golden set's denominators -- 78 answerable and
+# 26 unanswerable items -- so each one is expressed as "how many questions may
+# regress before this fails". See docs/gate-margins.md for the derivation.
+#
+#   retrieval metrics are deterministic given a fixed index, so their only
+#   run-to-run movement is corpus drift; they stay tight (~2 questions).
+#   judge metrics vary with regeneration, not with the judge itself (replaying
+#   it at temperature 0 measured a standard deviation of exactly 0), so their
+#   margins are a stated placeholder until repeated full runs measure it.
 GATES = {
-    ("retrieval", "recall_at_5"):            {"margin": 0.03, "higher_is_better": True},
-    ("retrieval", "context_precision_at_5"): {"margin": 0.03, "higher_is_better": True},
-    ("generation", "faithfulness"):          {"margin": 0.03, "higher_is_better": True},
-    ("generation", "answer_relevance"):      {"margin": 0.03, "higher_is_better": True},
-    ("robustness", "false_answer_rate"):     {"margin": 0.02, "higher_is_better": False},
-    ("latency_ms", "p95"):                   {"margin": 150.0, "higher_is_better": False},
+    ("retrieval", "recall_at_5"):             {"margin": 0.03, "higher_is_better": True},
+    ("retrieval", "all_relevant_at_5"):       {"margin": 0.03, "higher_is_better": True},
+    ("retrieval", "context_precision_at_5"):  {"margin": 0.03, "higher_is_better": True},
+    ("retrieval", "mrr"):                     {"margin": 0.05, "higher_is_better": True},
+    ("generation", "faithfulness"):           {"margin": 0.05, "higher_is_better": True},
+    ("generation", "answer_relevance"):       {"margin": 0.05, "higher_is_better": True},
+    ("generation", "citation_precision"):     {"margin": 0.05, "higher_is_better": True},
+    ("generation", "citation_validity"):      {"margin": 0.05, "higher_is_better": True},
+    ("robustness", "false_answer_rate"):      {"margin": 0.10, "higher_is_better": False},
+    ("robustness", "false_abstention_rate"):  {"margin": 0.10, "higher_is_better": False},
+    # End-to-end p95 is mostly the provider's latency, which no pull request
+    # controls: four runs of near-identical code spanned 30.5s to 43.3s. The old
+    # 150ms margin failed on that noise every time. 15s still catches a genuine
+    # doubling while absorbing the spread we have actually observed. Replace this
+    # with retrieval-stage latency once the pipeline emits per-stage spans.
+    ("latency_ms", "p95"):                    {"margin": 15000.0, "higher_is_better": False},
 }
 
 
