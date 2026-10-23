@@ -13,9 +13,9 @@
 # (t4g/Graviton is arm64).
 FROM python:3.12-slim
 
-# The docs revision the index is built from. Defaults to master, which MOVES --
-# pass a tag or commit sha to get a reproducible image.
-ARG FASTAPI_REF=master
+# The docs revision the index is built from. Pinned, because chunk ids are the
+# contract the golden set is written against.
+ARG FASTAPI_REF=0.159.1
 ENV FASTAPI_REF=${FASTAPI_REF}
 
 WORKDIR /app
@@ -48,7 +48,7 @@ COPY . .
 # Fetch the docs and build both indexes at build time. Needs network here so it
 # needs none later; a cold start opens files instead of embedding 953 chunks.
 RUN python -m observable_rag.index.build && \
-    python -m observable_rag.ingest.manifest --check --ids-only
+    python -m observable_rag.ingest.manifest --check
 
 # Drop privileges. The app only ever reads its data directory.
 RUN useradd --create-home --uid 10001 app && chown -R app:app /app /opt/models

@@ -22,7 +22,7 @@ NAME="${DEPLOY_NAME:-observable-rag}"
 KEY_NAME="${KEY_NAME:-$NAME}"
 VOLUME_GB="${VOLUME_GB:-20}"
 SSM_KEY_PARAM="${SSM_KEY_PARAM:-/observable-rag/openai-api-key}"
-FASTAPI_REF="${FASTAPI_REF:-master}"
+FASTAPI_REF="${FASTAPI_REF:-0.159.1}"
 PLATFORM="linux/arm64"            # t4g is Graviton; see the ADR
 IMAGE="$NAME:deploy"
 TARBALL="/tmp/$NAME.tar"
@@ -81,7 +81,14 @@ cmd_provision() {
   cmd_plan
   echo
   bold "This creates billable AWS resources."
-  read -r -p "Type the instance type to confirm ($INSTANCE_TYPE): " confirm
+  # CONFIRM=<instance-type> skips the prompt, for an operator who has already
+  # decided. Interactive use still has to type it.
+  local confirm="${CONFIRM:-}"
+  if [ -z "$confirm" ]; then
+    read -r -p "Type the instance type to confirm ($INSTANCE_TYPE): " confirm
+  else
+    dim "  confirmed via CONFIRM="
+  fi
   [ "$confirm" = "$INSTANCE_TYPE" ] || die "not confirmed"
 
   local ami sg
@@ -235,7 +242,10 @@ cmd_destroy() {
   local id; id=$(instance_id || true)
   [ -n "$id" ] || die "nothing tagged $NAME to destroy"
   bold "This terminates $id and deletes the security group."
-  read -r -p "Type the instance id to confirm: " confirm
+  local confirm="${CONFIRM:-}"
+  if [ -z "$confirm" ]; then
+    read -r -p "Type the instance id to confirm: " confirm
+  fi
   [ "$confirm" = "$id" ] || die "not confirmed"
   aws ec2 terminate-instances --region "$REGION" --instance-ids "$id" >/dev/null
   aws ec2 wait instance-terminated --region "$REGION" --instance-ids "$id"

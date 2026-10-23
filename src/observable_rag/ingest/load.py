@@ -5,7 +5,8 @@ download the repo archive once from codeload (no API rate limits, reproducible)
 and read the Markdown out of it, so each file yields a stable slug = its path
 under that folder, e.g. "tutorial/response-status-code". Non-content meta files
 (underscore-prefixed, e.g. _llm-test) are skipped. Pin `ref` to a tag or commit
-SHA for full reproducibility; it defaults to the repo's default branch.
+SHA for full reproducibility; it defaults to 0.159.1, pinned deliberately --
+chunk ids are the contract the golden set is written against, and master moves.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import httpx
 
 REPO = "fastapi/fastapi"
 DOCS_SEGMENT = "/docs/en/docs/"
-DEFAULT_REF = "master"
+DEFAULT_REF = "0.159.1"  # pinned: chunk ids are the golden set's contract
 SITE_BASE = "https://fastapi.tiangolo.com/"
 _CODELOAD = "https://codeload.github.com"
 
