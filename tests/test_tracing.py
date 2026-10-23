@@ -38,3 +38,26 @@ def test_init_tracing_degrades_without_phoenix(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", no_phoenix)
     assert tracing.init_tracing() is None
     tracing._TRACER = None
+
+def test_tracing_is_off_unless_an_endpoint_is_configured(monkeypatch):
+    """A registered exporter with no collector behind it retried against
+    localhost:4317 until the deployed API stopped answering requests. An
+    observability tool must not be able to take down what it observes."""
+    import observable_rag.observability.tracing as t
+
+    for var in ("PHOENIX_COLLECTOR_ENDPOINT", "OTEL_EXPORTER_OTLP_ENDPOINT"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(t, "_TRACER", "pretend-a-tracer-was-registered")
+
+    assert t.tracing_endpoint() is None
+    assert t.init_tracing() is None
+    assert t._TRACER is None
+
+    with t.span("x") as sp:          # still a safe no-op
+        sp.set_attribute("k", "v")
+
+
+def test_an_explicit_endpoint_is_honoured(monkeypatch):
+    import observable_rag.observability.tracing as t
+    monkeypatch.setenv("PHOENIX_COLLECTOR_ENDPOINT", "http://collector:4317")
+    assert t.tracing_endpoint() == "http://collector:4317"

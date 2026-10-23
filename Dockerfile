@@ -43,6 +43,13 @@ import observable_rag.index.vector as v, observable_rag.retrieve.rerank as r; \
 SentenceTransformer(v.MODEL_NAME); CrossEncoder(r.RERANK_MODEL); \
 print('models cached')"
 
+# From here on, never reach for the Hub. sentence-transformers still fetches the
+# model card on load even when the weights are cached, so a started container
+# was making calls to huggingface.co -- a startup dependency on a third party
+# that the baked models were supposed to remove. Set AFTER the download above,
+# which obviously does need the network.
+ENV HF_HUB_OFFLINE=1
+
 COPY . .
 
 # Fetch the docs and build both indexes at build time. Needs network here so it

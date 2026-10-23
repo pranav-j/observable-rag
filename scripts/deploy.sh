@@ -148,15 +148,36 @@ cmd_provision() {
     --metadata-options "HttpTokens=required" \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$NAME}]" \
     --user-data '#!/bin/bash
-apt-get update -y && apt-get install -y docker.io awscli
+# Deliberately NOT chained with &&: Ubuntu 24.04 dropped the awscli deb, and
+# chaining meant that failure aborted the docker install too, leaving an
+# instance that looked provisioned and had neither.
+apt-get update -y
+apt-get install -y docker.io
 systemctl enable --now docker
-usermod -aG docker ubuntu' \
+usermod -aG docker ubuntu
+snap install aws-cli --classic   # the deb is gone on 24.04; the instance needs
+                                 # it to read the API key from SSM
+touch /var/lib/cloud/instance/bootstrap-done' \
     --query 'Instances[0].InstanceId' --output text
 
   bold "  waiting for it to come up..."
   aws ec2 wait instance-running --region "$REGION" --instance-ids "$(instance_id)"
   bold "  $(instance_id) at $(public_ip)"
-  dim "  give it a minute to finish installing docker, then: scripts/deploy.sh push"
+
+  # Wait for the bootstrap to actually finish. Running push against a half-built
+  # instance copies 900MB and then fails on `docker: command not found`.
+  bold "  waiting for docker to install..."
+  local ip; ip=$(public_ip)
+  for _ in $(seq 1 60); do
+    if ssh -i "$HOME/.ssh/$KEY_NAME.pem" -o StrictHostKeyChecking=accept-new \
+         -o ConnectTimeout=5 "$SSH_USER@$ip" \
+         "test -f /var/lib/cloud/instance/bootstrap-done" 2>/dev/null; then
+      bold "  ready. next: scripts/deploy.sh push"
+      return 0
+    fi
+    sleep 10
+  done
+  die "bootstrap did not finish; check: ssh -i ~/.ssh/$KEY_NAME.pem $SSH_USER@$ip sudo tail /var/log/cloud-init-output.log"
 }
 
 cmd_push() {
