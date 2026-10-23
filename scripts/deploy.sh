@@ -318,8 +318,18 @@ cmd_destroy() {
     --role-name "$NAME" 2>/dev/null || true
   aws iam delete-instance-profile --instance-profile-name "$NAME" 2>/dev/null || true
   aws iam delete-role-policy --role-name "$NAME" --policy-name read-api-key 2>/dev/null || true
+  # Managed policies have to be DETACHED before the role will delete; without
+  # this the role survives a destroy and the next provision reuses a stale one.
+  for arn in $(aws iam list-attached-role-policies --role-name "$NAME" \
+                 --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
+    aws iam detach-role-policy --role-name "$NAME" --policy-arn "$arn" 2>/dev/null || true
+  done
   aws iam delete-role --role-name "$NAME" 2>/dev/null || true
   bold "  terminated"
+  dim "  kept: the ECR image (~\$0.09/mo) and the SSM key (free), so the next"
+  dim "  deploy skips a 900MB push. Remove them with:"
+  dim "    aws ecr delete-repository --region $REGION --repository-name $NAME --force"
+  dim "    aws ssm delete-parameter --region $REGION --name $SSM_KEY_PARAM"
 }
 
 case "${1:-plan}" in
