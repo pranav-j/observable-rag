@@ -25,8 +25,10 @@ SSM_KEY_PARAM="${SSM_KEY_PARAM:-/observable-rag/openai-api-key}"
 FASTAPI_REF="${FASTAPI_REF:-0.159.1}"
 PLATFORM="linux/arm64"            # t4g is Graviton; see the ADR
 IMAGE="$NAME:deploy"
-TARBALL="/tmp/$NAME.tar"
 SSH_USER="ubuntu"
+ACCOUNT="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text 2>/dev/null)}"
+ECR_REGISTRY="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
+ECR_URI="$ECR_REGISTRY/$NAME"
 
 # Ubuntu 24.04 LTS arm64, resolved from SSM so it is never a stale hardcoded AMI
 AMI_PARAM="/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
@@ -133,6 +135,12 @@ cmd_provision() {
         \"Statement\":[{\"Effect\":\"Allow\",
           \"Action\":[\"ssm:GetParameter\"],
           \"Resource\":\"arn:aws:ssm:$REGION:*:parameter$SSM_KEY_PARAM\"}]}" >/dev/null
+    # Session Manager, so diagnosis never needs an inbound ssh port, and ECR
+    # read, so the instance pulls its own image.
+    aws iam attach-role-policy --role-name "$NAME" \
+      --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore >/dev/null
+    aws iam attach-role-policy --role-name "$NAME" \
+      --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly >/dev/null
     aws iam create-instance-profile --instance-profile-name "$NAME" >/dev/null
     aws iam add-role-to-instance-profile --instance-profile-name "$NAME" \
       --role-name "$NAME" >/dev/null
@@ -166,38 +174,65 @@ touch /var/lib/cloud/instance/bootstrap-done' \
 
   # Wait for the bootstrap to actually finish. Running push against a half-built
   # instance copies 900MB and then fails on `docker: command not found`.
-  bold "  waiting for docker to install..."
-  local ip; ip=$(public_ip)
+  bold "  waiting for docker and the SSM agent..."
   for _ in $(seq 1 60); do
-    if ssh -i "$HOME/.ssh/$KEY_NAME.pem" -o StrictHostKeyChecking=accept-new \
-         -o ConnectTimeout=5 "$SSH_USER@$ip" \
-         "test -f /var/lib/cloud/instance/bootstrap-done" 2>/dev/null; then
+    if [ "$(aws ssm describe-instance-information --region "$REGION" \
+              --filters "Key=InstanceIds,Values=$(instance_id)" \
+              --query 'length(InstanceInformationList)' --output text 2>/dev/null)" = "1" ]; then
       bold "  ready. next: scripts/deploy.sh push"
       return 0
     fi
     sleep 10
   done
-  die "bootstrap did not finish; check: ssh -i ~/.ssh/$KEY_NAME.pem $SSH_USER@$ip sudo tail /var/log/cloud-init-output.log"
+  die "instance never registered with SSM; check the console output: aws ec2 get-console-output --region $REGION --instance-id $(instance_id)"
 }
 
 cmd_push() {
   need docker; need aws
-  local ip; ip=$(public_ip) || die "no instance — run provision first"
-  [ -n "$ip" ] && [ "$ip" != "None" ] || die "instance has no public IP"
 
   bold "building $IMAGE for $PLATFORM (ref: $FASTAPI_REF)"
   docker build --platform "$PLATFORM" --build-arg "FASTAPI_REF=$FASTAPI_REF" \
     -t "$IMAGE" .
 
-  bold "copying to $ip"
-  docker save "$IMAGE" -o "$TARBALL"
-  dim "  $(du -h "$TARBALL" | cut -f1) — this takes a few minutes"
-  scp -i "$HOME/.ssh/$KEY_NAME.pem" -o StrictHostKeyChecking=accept-new \
-    "$TARBALL" "$SSH_USER@$ip:/tmp/"
-  ssh -i "$HOME/.ssh/$KEY_NAME.pem" "$SSH_USER@$ip" \
-    "sudo docker load -i /tmp/$NAME.tar && rm /tmp/$NAME.tar"
-  rm -f "$TARBALL"
-  bold "  loaded. next: scripts/deploy.sh start"
+  # Through a registry rather than scp over ssh. The first version copied a
+  # 900MB tarball to the box, which meant the deploy depended on this laptop's
+  # egress IP matching the security group's ssh rule -- and behind a VPN that
+  # rotates exit nodes, it stops matching mid-deploy. The instance pulls using
+  # its own IAM role instead, so no inbound ssh is needed at all.
+  aws ecr describe-repositories --region "$REGION" --repository-names "$NAME" \
+    >/dev/null 2>&1 || {
+      bold "creating ECR repository $NAME"
+      aws ecr create-repository --region "$REGION" --repository-name "$NAME" \
+        --image-scanning-configuration scanOnPush=false >/dev/null
+    }
+
+  bold "pushing to $ECR_URI"
+  aws ecr get-login-password --region "$REGION" \
+    | docker login --username AWS --password-stdin "$ECR_REGISTRY" >/dev/null
+  docker tag "$IMAGE" "$ECR_URI:latest"
+  docker push "$ECR_URI:latest"
+  bold "  pushed. next: scripts/deploy.sh start"
+}
+
+# Run a script on the instance through SSM, with no inbound ports open. base64
+# because SSM collapses newlines in a multi-line command string.
+remote() {
+  local b64 cid status
+  b64=$(base64 | tr -d '\n')
+  cid=$(aws ssm send-command --region "$REGION" --instance-ids "$(instance_id)" \
+          --document-name AWS-RunShellScript --timeout-seconds 900 \
+          --parameters commands="[\"echo $b64 | base64 -d > /tmp/r.sh\",\"sh /tmp/r.sh\",\"rm -f /tmp/r.sh\"]" \
+          --query 'Command.CommandId' --output text) || die "could not reach the instance over SSM"
+  for _ in $(seq 1 90); do
+    status=$(aws ssm get-command-invocation --region "$REGION" --command-id "$cid" \
+               --instance-id "$(instance_id)" --query Status --output text 2>/dev/null || echo Pending)
+    case "$status" in Success|Failed|TimedOut|Cancelled) break ;; esac
+    sleep 10
+  done
+  aws ssm get-command-invocation --region "$REGION" --command-id "$cid" \
+    --instance-id "$(instance_id)" --query '[StandardOutputContent,StandardErrorContent]' \
+    --output text
+  [ "$status" = "Success" ] || die "remote command $status"
 }
 
 cmd_start() {
@@ -208,22 +243,29 @@ cmd_start() {
   aws ssm put-parameter --region $REGION --name $SSM_KEY_PARAM \\
     --type SecureString --value sk-..."
 
-  # The key is fetched on the instance and piped into docker's env file; it is
-  # never an argument, so it never lands in a shell history or a process list.
-  ssh -i "$HOME/.ssh/$KEY_NAME.pem" "$SSH_USER@$ip" bash -s <<REMOTE
-set -euo pipefail
-sudo docker rm -f $NAME 2>/dev/null || true
+  # The key is fetched ON the instance and written to an env file, never passed
+  # as an argument, so it stays out of shell history and the process list. The
+  # fetch is checked before the container starts -- an empty value here silently
+  # produced a container whose every request failed on missing credentials.
+  remote <<REMOTE
+set -e
+KEY=\$(/snap/bin/aws ssm get-parameter --region $REGION --name $SSM_KEY_PARAM \\
+        --with-decryption --query Parameter.Value --output text)
+if [ -z "\$KEY" ]; then echo "FATAL: SSM returned an empty key"; exit 1; fi
+/snap/bin/aws ecr get-login-password --region $REGION \\
+  | docker login --username AWS --password-stdin $ECR_REGISTRY >/dev/null
+docker pull -q $ECR_URI:latest
+docker rm -f $NAME >/dev/null 2>&1 || true
 umask 077
-aws ssm get-parameter --region $REGION --name $SSM_KEY_PARAM --with-decryption \
-  --query Parameter.Value --output text > /tmp/key 2>/dev/null \
-  || { echo "instance cannot read SSM — attach a role with ssm:GetParameter"; exit 1; }
-printf 'OPENAI_API_KEY=%s\nLLM_PROVIDER=openai\n' "\$(cat /tmp/key)" > /tmp/env
-rm -f /tmp/key
-sudo docker run -d --name $NAME --restart unless-stopped \
-  -p 80:8000 --env-file /tmp/env \
-  -e RATE_PER_MINUTE=5 -e RATE_PER_DAY=30 -e GLOBAL_PER_DAY=500 \
-  $IMAGE
+printf 'OPENAI_API_KEY=%s\\n' "\$KEY" > /tmp/env
+printf 'LLM_PROVIDER=openai\\n' >> /tmp/env
+docker run -d --name $NAME --restart unless-stopped \\
+  -p 80:8000 --env-file /tmp/env \\
+  -e RATE_PER_MINUTE=5 -e RATE_PER_DAY=30 -e GLOBAL_PER_DAY=500 \\
+  $ECR_URI:latest >/dev/null
 rm -f /tmp/env
+sleep 5
+docker exec $NAME sh -c 'echo "key reached the container: \${#OPENAI_API_KEY} chars"'
 REMOTE
   bold "  started at http://$ip"
   dim "  it loads models on boot; /ready reports when it is serving"
