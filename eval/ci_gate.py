@@ -31,17 +31,27 @@ from pathlib import Path
 #   judge metrics vary with regeneration, not with the judge itself (replaying
 #   it at temperature 0 measured a standard deviation of exactly 0), so their
 #   margins are a stated placeholder until repeated full runs measure it.
+# Judge and robustness margins are 3x the standard deviation measured across
+# three full runs of identical code (reports/eval_run{1,2,3}.json), rounded to
+# the nearest question. Retrieval measured stdev 0.0000 across those runs -- it
+# is deterministic given a fixed index -- so those stay tight and absorb about
+# two questions of 78, which is drift, not noise.
 GATES = {
     ("retrieval", "recall_at_5"):             {"margin": 0.03, "higher_is_better": True},
     ("retrieval", "all_relevant_at_5"):       {"margin": 0.03, "higher_is_better": True},
     ("retrieval", "context_precision_at_5"):  {"margin": 0.03, "higher_is_better": True},
-    ("retrieval", "mrr"):                     {"margin": 0.05, "higher_is_better": True},
-    ("generation", "faithfulness"):           {"margin": 0.05, "higher_is_better": True},
-    ("generation", "answer_relevance"):       {"margin": 0.05, "higher_is_better": True},
-    ("generation", "citation_precision"):     {"margin": 0.05, "higher_is_better": True},
-    ("generation", "citation_validity"):      {"margin": 0.05, "higher_is_better": True},
-    ("robustness", "false_answer_rate"):      {"margin": 0.10, "higher_is_better": False},
-    ("robustness", "false_abstention_rate"):  {"margin": 0.10, "higher_is_better": False},
+    ("retrieval", "mrr"):                     {"margin": 0.03, "higher_is_better": True},
+    ("generation", "faithfulness"):           {"margin": 0.03, "higher_is_better": True},
+    ("generation", "answer_relevance"):       {"margin": 0.02, "higher_is_better": True},
+    # The noisiest metric by a distance: stdev 0.0336, spread 0.071 across three
+    # identical runs. 0.05 was tighter than its own noise floor and would have
+    # failed on wobble, exactly as the 150ms latency margin did.
+    ("generation", "citation_precision"):     {"margin": 0.10, "higher_is_better": True},
+    ("generation", "citation_validity"):      {"margin": 0.02, "higher_is_better": True},
+    ("robustness", "false_answer_rate"):      {"margin": 0.08, "higher_is_better": False},
+    ("robustness", "false_abstention_rate"):  {"margin": 0.04, "higher_is_better": False},
+    # Declined and then answered anyway, on a question the sources answer.
+    ("robustness", "contradiction_rate"):     {"margin": 0.03, "higher_is_better": False},
     # End-to-end p95 is mostly the provider's latency, which no pull request
     # controls: four runs of near-identical code spanned 30.5s to 43.3s. The old
     # 150ms margin failed on that noise every time. 15s still catches a genuine

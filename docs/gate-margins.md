@@ -10,22 +10,43 @@ chosen and what was wrong with the ones it replaced.
 
 ## Applied margins
 
-| metric | old | now | sized as |
-| --- | --- | --- | --- |
-| `recall_at_5` | 0.03 | 0.03 | absorbs 2 questions of 78 |
-| `all_relevant_at_5` | ungated | 0.03 | absorbs 2 of 78 |
-| `context_precision_at_5` | 0.03 | 0.03 | unchanged |
-| `mrr` | ungated | 0.05 | absorbs 3 of 78 |
-| `faithfulness` | 0.03 | 0.05 | placeholder — see below |
-| `answer_relevance` | 0.03 | 0.05 | placeholder |
-| `citation_precision` | ungated | 0.05 | placeholder |
-| `citation_validity` | ungated | 0.05 | placeholder |
-| `false_answer_rate` | 0.02 | 0.10 | absorbs 2 of 26, fails on 3 |
-| `false_abstention_rate` | ungated | 0.10 | absorbs 7 of 78 |
-| `latency_ms.p95` | 150 ms | 15000 ms | measured spread — see below |
+Every judge and robustness margin is **3x the standard deviation measured
+across three full runs of identical code** (`reports/eval_run{1,2,3}.json`),
+rounded to the nearest whole question. Retrieval measured a standard deviation
+of exactly zero, so those margins are sized for drift instead.
 
-Eleven metrics are gated, up from six. `false_abstention_rate` matters
-particularly: without it the gate can be satisfied by abstaining more often.
+| metric | margin | measured stdev | 3x stdev |
+| --- | --- | --- | --- |
+| `recall_at_5` | 0.03 | **0.0000** | — (2 questions of 78) |
+| `all_relevant_at_5` | 0.03 | **0.0000** | — |
+| `context_precision_at_5` | 0.03 | **0.0000** | — |
+| `mrr` | 0.03 | **0.0000** | — |
+| `faithfulness` | 0.03 | 0.0090 | 0.027 |
+| `answer_relevance` | 0.02 | 0.0053 | 0.016 |
+| `citation_precision` | 0.10 | 0.0336 | 0.101 |
+| `citation_validity` | 0.02 | 0.0032 | 0.010 |
+| `false_answer_rate` | 0.08 | 0.0181 | 0.054 → 2 of 26 |
+| `false_abstention_rate` | 0.04 | 0.0105 | 0.031 |
+| `contradiction_rate` | 0.03 | 0.0060 | 0.018 |
+| `latency_ms.p95` | 15000 ms | — | measured spread, see below |
+
+Twelve metrics are gated, up from six. Two things stand out.
+
+**Retrieval is exactly deterministic.** Three runs, identical to four decimal
+places on `recall_at_5`, `all_relevant_at_5`, `context_precision_at_5` and
+`mrr`. This had been asserted here on reasoning; now it is measured. Their
+margins are therefore not absorbing noise — there is none — they are absorbing
+corpus drift, and a tight margin is the correct setting.
+
+**`citation_precision` is the noisiest metric by a distance**, at 3.7x the
+standard deviation of faithfulness and with a spread of 0.071 across identical
+runs. Its previous margin of 0.05 was *tighter than its own noise floor*, so it
+would have failed on wobble exactly as the 150 ms latency margin did. Widening
+it to 0.10 is the one margin here that got looser, and it is the direct
+consequence of measuring rather than guessing.
+
+`false_abstention_rate` matters particularly: without it the gate can be
+satisfied by abstaining more often.
 
 ## What was wrong with the old margins
 
@@ -67,10 +88,10 @@ This is what decides whether a margin is absorbing noise or hiding a regression:
 - **`latency_ms`** end-to-end is mostly the provider's latency, which no pull
   request controls.
 
-## The judge margins are placeholders, not measurements
+## How the judge margins stopped being guesses
 
-The plan was to set them to 3× the standard deviation across repeated judge
-runs. That run happened — `reports/judge_noise_2026-10-20.json`, three passes
+The original plan was to set them to 3x the standard deviation across repeated
+**judge** runs. That run happened — `reports/judge_noise_2026-10-20.json`, three passes
 over the same stored answers, `gpt-4o-mini` judging a `gpt-5-nano` generator,
 full coverage, no errors:
 
@@ -90,25 +111,29 @@ calls were dropped on each pass, so the metric's denominator moved between runs.
 Apparent noise from a degraded run looks exactly like the real thing, which is
 why the report now carries `judge_coverage` and `judge_errors`.
 
-So the variance these margins must absorb is in **regeneration**, not judging.
+So the variance these margins must absorb is in **regeneration**, not judging —
+the generator is not deterministic at `temperature=0` even though the judge is.
 
-There is now one measurement of it. The same prompt, over the same 26
-unanswerable questions, run twice:
+Three full runs of identical code measured it:
 
-| run | `false_answer_rate` | questions answered |
-| --- | --- | --- |
-| `reports/eval_104_prompt_v3.json` | 0.3077 | 8 of 26 |
-| the same prompt on a 40-question subset | 0.2308 | 6 of 26 |
+| metric | run 1 | run 2 | run 3 | stdev |
+| --- | --- | --- | --- | --- |
+| `faithfulness` | 0.9875 | 0.9684 | 0.9683 | 0.0090 |
+| `answer_relevance` | 0.9875 | 0.9810 | 0.9939 | 0.0053 |
+| `citation_precision` | 0.9201 | 0.8489 | 0.8489 | 0.0336 |
+| `citation_validity` | 0.9673 | 0.9737 | 0.9745 | 0.0032 |
+| `false_answer_rate` | 0.1923 | 0.1923 | 0.2308 | 0.0181 |
+| `false_abstention_rate` | 0.0385 | 0.0513 | 0.0256 | 0.0105 |
+| `contradiction_rate` | 0.0256 | 0.0256 | 0.0128 | 0.0060 |
 
-**A spread of 0.077 from identical code** — two questions flipping between runs
-at `temperature=0`, because the generator is not actually deterministic. That is
-the number the judge margins were missing, and it is large: the 0.10 margin on
-`false_answer_rate` absorbs barely more than one noise-width.
+The margins in the table above are 3x these, rounded to a whole question. Both
+other runs pass the gate against run 1 as the baseline, and a simulated
+regression of four questions losing their chunk plus three more hallucinations
+still fails it.
 
-It also sets the bar for believing a change. A prompt revision that moved
-`false_answer_rate` by 0.0385 moved it by half the noise, which is not evidence
-of anything. The 0.05 judge margins remain stated guesses rather than
-measurements, but they are now at least the right order of magnitude.
+This also sets the bar for believing a change. A prompt revision that moves
+`false_answer_rate` by 0.04 has moved it by about two standard deviations of
+pure noise, which is not evidence of anything on its own.
 
 ## Latency keeps a loose gate rather than none
 

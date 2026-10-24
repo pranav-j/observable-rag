@@ -1,21 +1,21 @@
 {
   "metadata": {
-    "timestamp": "2026-10-23T02:41:12.488294+00:00",
-    "git_sha": "842acde",
+    "timestamp": "2026-10-24T03:21:42.727742+00:00",
+    "git_sha": "e60598b",
     "k": 5,
     "n_items": 104,
     "n_answerable": 78,
     "n_unanswerable": 26,
     "judge_graded": {
-      "faithfulness": 82,
-      "answer_relevance": 82,
-      "citation_precision": 71
+      "faithfulness": 80,
+      "answer_relevance": 80,
+      "citation_precision": 72
     },
-    "judge_gradable": 82,
+    "judge_gradable": 80,
     "judge_coverage": {
       "faithfulness": 1.0,
       "answer_relevance": 1.0,
-      "citation_precision": 0.8659
+      "citation_precision": 0.9
     },
     "judge_undercovered": [],
     "system": "RagPipeline",
@@ -31,32 +31,33 @@
     },
     "corpus": {
       "fastapi_ref": "0.159.1",
-      "n_chunks": 977
+      "n_chunks": 453
     }
   },
   "retrieval": {
-    "recall_at_5": 0.8205,
+    "recall_at_5": 0.8269,
     "all_relevant_at_5": 0.7949,
-    "context_precision_at_5": 0.1821,
-    "mrr": 0.7081
+    "context_precision_at_5": 0.1846,
+    "mrr": 0.7118
   },
   "generation": {
-    "faithfulness": 0.9695,
-    "answer_relevance": 0.9878,
-    "citation_precision": 0.9014,
-    "citation_validity": 0.9603
+    "faithfulness": 0.9875,
+    "answer_relevance": 0.9875,
+    "citation_precision": 0.9201,
+    "citation_validity": 0.9673
   },
   "robustness": {
-    "false_answer_rate": 0.2692,
-    "false_abstention_rate": 0.0385
+    "false_answer_rate": 0.1923,
+    "false_abstention_rate": 0.0385,
+    "contradiction_rate": 0.0256
   },
   "latency_ms": {
-    "p50": 16539.09,
-    "p95": 32355.35
+    "p50": 14885.95,
+    "p95": 34922.43
   },
   "confidence_intervals": {
     "recall_at_5": [
-      0.7372,
+      0.7436,
       0.9038
     ],
     "all_relevant_at_5": [
@@ -64,53 +65,53 @@
       0.8846
     ],
     "context_precision_at_5": [
-      0.1615,
-      0.2026
+      0.1641,
+      0.2051
     ],
     "mrr": [
-      0.6205,
-      0.791
+      0.6235,
+      0.7947
     ],
     "faithfulness": [
-      0.9329,
+      0.9625,
       1.0
     ],
     "answer_relevance": [
-      0.9695,
+      0.9625,
       1.0
     ],
     "citation_precision": [
-      0.831,
-      0.9577
+      0.8611,
+      0.9722
     ],
     "false_answer_rate": [
-      0.1154,
-      0.4615
+      0.0385,
+      0.3462
     ],
     "false_abstention_rate": [
       0.0,
-      0.0897
+      0.0769
     ]
   },
   "judge_spread": {
     "faithfulness": {
-      "mean": 0.9695,
-      "min": 0.9695,
-      "max": 0.9695,
+      "mean": 0.9875,
+      "min": 0.9875,
+      "max": 0.9875,
       "stdev": 0.0,
       "runs": 1
     },
     "answer_relevance": {
-      "mean": 0.9878,
-      "min": 0.9878,
-      "max": 0.9878,
+      "mean": 0.9875,
+      "min": 0.9875,
+      "max": 0.9875,
       "stdev": 0.0,
       "runs": 1
     },
     "citation_precision": {
-      "mean": 0.9014,
-      "min": 0.9014,
-      "max": 0.9014,
+      "mean": 0.9201,
+      "min": 0.9201,
+      "max": 0.9201,
       "stdev": 0.0,
       "runs": 1
     }
@@ -121,38 +122,41 @@
       "all_relevant_at_5": 0.7692,
       "context_precision_at_5": 0.1538,
       "mrr": 0.6538,
-      "faithfulness": 1.0,
+      "faithfulness": 0.9167,
       "answer_relevance": 1.0,
-      "citation_precision": 1.0,
+      "citation_precision": 0.9,
       "false_answer_rate": null,
       "false_abstention_rate": 0.0769,
+      "contradiction_rate": 0.0769,
       "citation_validity": 1.0,
       "n": 13
     },
     "factual": {
-      "recall_at_5": 0.9048,
-      "all_relevant_at_5": 0.9048,
-      "context_precision_at_5": 0.181,
-      "mrr": 0.7397,
-      "faithfulness": 0.95,
-      "answer_relevance": 1.0,
-      "citation_precision": 0.9394,
+      "recall_at_5": 0.881,
+      "all_relevant_at_5": 0.881,
+      "context_precision_at_5": 0.1762,
+      "mrr": 0.7317,
+      "faithfulness": 1.0,
+      "answer_relevance": 0.9756,
+      "citation_precision": 0.9122,
       "false_answer_rate": null,
-      "false_abstention_rate": 0.0476,
-      "citation_validity": 0.9655,
+      "false_abstention_rate": 0.0238,
+      "contradiction_rate": 0.0,
+      "citation_validity": 1.0,
       "n": 42
     },
     "multi_hop": {
-      "recall_at_5": 0.6364,
+      "recall_at_5": 0.6818,
       "all_relevant_at_5": 0.4545,
-      "context_precision_at_5": 0.2545,
-      "mrr": 0.7121,
+      "context_precision_at_5": 0.2727,
+      "mrr": 0.7303,
       "faithfulness": 1.0,
       "answer_relevance": 1.0,
-      "citation_precision": 0.8,
+      "citation_precision": 1.0,
       "false_answer_rate": null,
-      "false_abstention_rate": 0.0,
-      "citation_validity": 0.8667,
+      "false_abstention_rate": 0.0909,
+      "contradiction_rate": 0.0909,
+      "citation_validity": 1.0,
       "n": 11
     },
     "near_miss": {
@@ -162,22 +166,24 @@
       "mrr": null,
       "faithfulness": 1.0,
       "answer_relevance": 1.0,
-      "citation_precision": 1.0,
+      "citation_precision": 0.8333,
       "false_answer_rate": 0.6,
       "false_abstention_rate": null,
-      "citation_validity": 1.0,
+      "contradiction_rate": null,
+      "citation_validity": 0.7778,
       "n": 5
     },
     "paraphrase": {
-      "recall_at_5": 0.75,
-      "all_relevant_at_5": 0.75,
-      "context_precision_at_5": 0.15,
-      "mrr": 0.6528,
-      "faithfulness": 0.9583,
-      "answer_relevance": 0.9167,
+      "recall_at_5": 0.8333,
+      "all_relevant_at_5": 0.8333,
+      "context_precision_at_5": 0.1667,
+      "mrr": 0.6875,
+      "faithfulness": 1.0,
+      "answer_relevance": 1.0,
       "citation_precision": 0.9091,
       "false_answer_rate": null,
       "false_abstention_rate": 0.0,
+      "contradiction_rate": 0.0,
       "citation_validity": 0.9333,
       "n": 12
     },
@@ -188,9 +194,10 @@
       "mrr": null,
       "faithfulness": 1.0,
       "answer_relevance": 1.0,
-      "citation_precision": 0.3333,
-      "false_answer_rate": 0.3077,
+      "citation_precision": 1.0,
+      "false_answer_rate": 0.1538,
       "false_abstention_rate": null,
+      "contradiction_rate": null,
       "citation_validity": 1.0,
       "n": 13
     },
@@ -204,7 +211,8 @@
       "citation_precision": null,
       "false_answer_rate": 0.0,
       "false_abstention_rate": null,
-      "citation_validity": 0.9524,
+      "contradiction_rate": null,
+      "citation_validity": 0.8571,
       "n": 8
     }
   }
