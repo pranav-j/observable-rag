@@ -71,6 +71,15 @@ def _is_contradictory(text: str, citations: list[str]) -> bool:
     and then produces a substantial, cited answer is its own failure: whatever
     the metrics call it, a reader is told "not covered" and then handed the
     thing that supposedly isn't covered.
+
+    Only meaningful on ANSWERABLE questions -- the harness scores it there. On
+    an unanswerable one, declining and then naming what the sources do cover is
+    the intended shape, and counting those flagged 17 replies of which 11 were
+    behaving correctly.
+
+    On the current golden set every false abstention is also a contradiction:
+    the model never simply fails to find an answer, it finds one, says it
+    didn't, and then gives it anyway.
     """
     stripped = text.strip()
     if not stripped.lower().startswith(ABSTAIN_MESSAGE.lower()):

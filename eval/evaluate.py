@@ -410,7 +410,8 @@ def _slice(results: Sequence[ItemResult], k: int) -> dict:
         "citation_precision": _mean(cols["citation_precision"]),
         "false_answer_rate": _rate([r.false_answer for r in results]),
         "false_abstention_rate": _rate([r.false_abstention for r in results]),
-        "contradiction_rate": _rate([r.contradictory for r in results]),
+        "contradiction_rate": _rate([r.contradictory for r in results
+                                     if r.answerable]),
         "citation_validity": citation_validity(results),
         "n": len(results),
     }
@@ -471,9 +472,14 @@ def _aggregate(results: list[ItemResult], k: int, judge_runs: list[dict],
         "robustness": {
             "false_answer_rate": _rate([r.false_answer for r in unanswerable]),
             "false_abstention_rate": _rate([r.false_abstention for r in answerable]),
-            # Declined, then answered anyway. Invisible to the two rates above,
-            # because the reply opens with a refusal and is counted as one.
-            "contradiction_rate": _rate([r.contradictory for r in results]),
+            # Declined, then answered anyway -- counted over ANSWERABLE items
+            # only. On an unanswerable question, declining and then naming what
+            # the sources do cover is the intended shape, and scoring it over
+            # everything flagged 17 replies of which 11 were behaving correctly.
+            # The defect is refusing a question the sources answer and then
+            # answering it: the reader is told "not covered" and handed the
+            # thing that supposedly isn't covered.
+            "contradiction_rate": _rate([r.contradictory for r in answerable]),
         },
         "latency_ms": {
             "p50": _percentile(latency, 50),
