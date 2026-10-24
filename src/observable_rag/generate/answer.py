@@ -33,6 +33,7 @@ class RagOutput:
     latency_ms: float | None = None
     citations: list[str] = field(default_factory=list)
     invalid_citations: list[str] = field(default_factory=list)
+    contradictory: bool = False
 
 
 def _is_abstention(text: str) -> bool:
@@ -46,9 +47,36 @@ def _is_abstention(text: str) -> bool:
     check deterministic and auditable while leaving room to be useful.
 
     The elaboration after the opening is not itself checked here; it still
-    carries citations and is still subject to the judge metrics.
+    carries citations and is still subject to the judge metrics, and whether it
+    contradicts the refusal is measured separately by _is_contradictory.
     """
     return text.strip().lower().startswith(ABSTAIN_MESSAGE.lower())
+
+
+# Roughly a sentence's worth of prose. Below this the tail is a pointer ("the
+# sources discuss X"); well above it the model has written an actual answer.
+_CONTRADICTION_CHARS = 240
+
+
+def _is_contradictory(text: str, citations: list[str]) -> bool:
+    """Did it decline and then answer anyway?
+
+    Three prompt revisions tried to stop this and each one traded it against
+    hallucination: tightening the bar for declining brought the contradiction
+    back, loosening it answered half the unanswerable questions. Neither
+    false_abstention_rate nor false_answer_rate sees it -- the reply opens with
+    a refusal, so it is counted as an abstention no matter what follows.
+
+    So measure it instead of prompting at it. A reply that opens by declining
+    and then produces a substantial, cited answer is its own failure: whatever
+    the metrics call it, a reader is told "not covered" and then handed the
+    thing that supposedly isn't covered.
+    """
+    stripped = text.strip()
+    if not stripped.lower().startswith(ABSTAIN_MESSAGE.lower()):
+        return False
+    tail = stripped[len(ABSTAIN_MESSAGE):].strip()
+    return len(tail) > _CONTRADICTION_CHARS and bool(citations)
 
 
 def _parse_citations(answer: str, valid: set[str]) -> tuple[list[str], list[str]]:
@@ -88,6 +116,7 @@ class RagPipeline:
                 text = self.complete(build_messages(question, chunks))
             ids = [c.id for c in chunks]
             cited, fabricated = _parse_citations(text, set(ids))
+            contradictory = _is_contradictory(text, cited)
             out = RagOutput(
                 answer=text,
                 retrieved_chunk_ids=ids,
@@ -96,8 +125,10 @@ class RagPipeline:
                 latency_ms=(time.perf_counter() - t0) * 1000,
                 citations=cited,
                 invalid_citations=fabricated,
+                contradictory=contradictory,
             )
             sp.set_attribute("output.abstained", out.abstained)
             sp.set_attribute("output.citations", ", ".join(out.citations))
             sp.set_attribute("output.invalid_citations", ", ".join(fabricated))
+            sp.set_attribute("output.contradictory", contradictory)
             return out

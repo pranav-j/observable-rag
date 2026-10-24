@@ -80,6 +80,7 @@ class RagOutput:
     latency_ms: Optional[float] = None
     citations: list[str] = field(default_factory=list)
     invalid_citations: list[str] = field(default_factory=list)
+    contradictory: bool = False
 
 
 class RagSystem(Protocol):
@@ -244,6 +245,7 @@ class ItemResult:
     contexts: list[str]
     citations: list[str]
     invalid_citations: list[str]
+    contradictory: bool
     latency_ms: Optional[float]
     recall: Optional[float] = None
     all_relevant: Optional[float] = None
@@ -318,6 +320,7 @@ def run_eval(system: RagSystem, items: list[GoldenItem], k: int = 5,
             contexts=list(out.contexts),
             citations=list(getattr(out, "citations", [])),
             invalid_citations=list(getattr(out, "invalid_citations", [])),
+            contradictory=bool(getattr(out, "contradictory", False)),
             latency_ms=out.latency_ms,
         )
         if it.answerable:
@@ -407,6 +410,7 @@ def _slice(results: Sequence[ItemResult], k: int) -> dict:
         "citation_precision": _mean(cols["citation_precision"]),
         "false_answer_rate": _rate([r.false_answer for r in results]),
         "false_abstention_rate": _rate([r.false_abstention for r in results]),
+        "contradiction_rate": _rate([r.contradictory for r in results]),
         "citation_validity": citation_validity(results),
         "n": len(results),
     }
@@ -467,6 +471,9 @@ def _aggregate(results: list[ItemResult], k: int, judge_runs: list[dict],
         "robustness": {
             "false_answer_rate": _rate([r.false_answer for r in unanswerable]),
             "false_abstention_rate": _rate([r.false_abstention for r in answerable]),
+            # Declined, then answered anyway. Invisible to the two rates above,
+            # because the reply opens with a refusal and is counted as one.
+            "contradiction_rate": _rate([r.contradictory for r in results]),
         },
         "latency_ms": {
             "p50": _percentile(latency, 50),

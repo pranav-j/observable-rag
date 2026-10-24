@@ -246,7 +246,7 @@ def test_citation_validity_counts_attempts_not_just_survivors():
         return ItemResult(id="x", qtype="factual", answerable=True, question="q",
                           answer="a", abstained=False, retrieved_chunk_ids=[],
                           contexts=[], citations=good, invalid_citations=bad,
-                          latency_ms=1.0)
+                          contradictory=False, latency_ms=1.0)
 
     assert citation_validity([item(["a#0"], [])]) == 1.0
     assert citation_validity([item([], ["ghost#x"])]) == 0.0

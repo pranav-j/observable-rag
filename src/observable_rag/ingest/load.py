@@ -35,9 +35,21 @@ def _relpath(name: str) -> str:
     return name.split(DOCS_SEGMENT, 1)[1]
 
 
-def _is_content(name: str) -> bool:
+# Pages that aren't documentation of the framework. release-notes alone was 518
+# of 977 chunks -- a changelog that made up over half the retrieval pool, so
+# answers cited things like [release-notes#347] and every search competed
+# against hundreds of near-identical "fix typo in docs" entries. Removing a page
+# cannot renumber another, because chunk ids are per-document (source#index), so
+# every surviving id is unchanged.
+EXCLUDED_SOURCES = ("release-notes", "fastapi-people", "newsletter", "management")
+
+
+def _is_content(name: str, exclude: tuple[str, ...] = EXCLUDED_SOURCES) -> bool:
+    rel = _relpath(name)
     # skip non-content meta files, e.g. docs/en/docs/_llm-test.md
-    return not any(part.startswith("_") for part in _relpath(name).split("/"))
+    if any(part.startswith("_") for part in rel.split("/")):
+        return False
+    return rel[: -len(".md")] not in exclude
 
 
 def _site_url(slug: str) -> str:

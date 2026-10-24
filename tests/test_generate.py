@@ -141,3 +141,35 @@ def test_abstention_is_matched_on_the_opening_not_anywhere():
         retrieve=_retrieve)
     assert paraphrased.answer("?").abstained is False, \
         "a paraphrase must not count: the exact opening is the contract"
+
+
+def test_declining_then_answering_is_flagged_as_contradictory():
+    """Three prompt revisions failed to stop this, and neither robustness rate
+    sees it: the reply opens with a refusal so it counts as an abstention
+    whatever follows. Measured instead of prompted at."""
+    answered_anyway = RagPipeline(
+        complete=lambda m: (
+            f"{ABSTAIN_MESSAGE} However, it does explain that you can declare a "
+            "dependency by passing a callable to Depends(), which FastAPI then "
+            "resolves for each request and caches within that request's scope, "
+            "so the same dependency used twice is only computed once [a#0]. "
+            "You can also use it at router level [b#0]."),
+        retrieve=_retrieve)
+    out = answered_anyway.answer("how do I use Depends?")
+    assert out.abstained is True        # still counted as a decline...
+    assert out.contradictory is True    # ...but the contradiction is visible
+
+
+def test_a_clean_decline_with_a_pointer_is_not_contradictory():
+    """Declining and naming what the sources DO cover is the intended shape."""
+    pipe = RagPipeline(
+        complete=lambda m: f"{ABSTAIN_MESSAGE} The sources discuss CORS [a#0].",
+        retrieve=_retrieve)
+    out = pipe.answer("?")
+    assert out.abstained is True
+    assert out.contradictory is False
+
+
+def test_a_plain_answer_is_not_contradictory():
+    pipe = RagPipeline(complete=lambda m: "Use Depends [a#0]." * 20, retrieve=_retrieve)
+    assert pipe.answer("?").contradictory is False
