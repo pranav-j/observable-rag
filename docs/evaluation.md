@@ -38,6 +38,21 @@ correct behaviour on those is to abstain.
 
 Every metric is reported overall and per category, under `per_category`.
 
+## What's in the corpus
+
+The FastAPI docs, minus four pages that aren't documentation of the framework:
+`release-notes`, `fastapi-people`, `newsletter` and `management`
+(`ingest.load.EXCLUDED_SOURCES`).
+
+`release-notes` is the reason. It was 518 of 977 chunks — the changelog made up
+more than half the retrieval pool, so every search competed against hundreds of
+near-identical "fix typo in docs" entries, and answers cited things like
+`[release-notes#347]`. Removing it leaves 453 chunks of actual documentation.
+
+Chunk ids are per-document (`source#index`), so dropping a page cannot renumber
+another: all 83 chunk ids the golden set cites survived the change byte for
+byte, which the manifest check confirms.
+
 ## Retrieval metrics
 
 All four are deterministic — no LLM, no API key, no cost — and are computed from
