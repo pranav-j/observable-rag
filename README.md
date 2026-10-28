@@ -67,6 +67,30 @@ Then generation. The top chunks are given to an LLM with a prompt that makes it 
 every claim inline as `[source#chunk]`. If the docs don't actually cover the
 question, it's supposed to say so rather than invent an answer.
 
+## The demo page
+
+`uvicorn observable_rag.api.main:app` serves a single page at `/` — one static
+file, no build step. You type a question and get the answer with its citations
+linked back to the FastAPI docs page each chunk came from.
+
+The part I actually care about is below the answer:
+
+- **a stage waterfall** — embed, dense search, BM25, fusion, rerank, generate,
+  each with its own time
+- **every chunk that was sent to the model**, with which retriever found it
+  (dense, BM25, or both), its rank in each, and its cross-encoder score
+- **tokens and cost for that request**, from the provider's own counts
+- **when it declines**, and when it declines and then answers anyway
+
+That last one matters. It would be easy to show only the good answers; the
+failure modes are the interesting part, so they are on screen rather than
+hidden. Citations the model invented are rendered outlined instead of quietly
+dropped — about 4% of citation attempts don't resolve to a real chunk, and
+pretending otherwise would make the demo look better than the system is.
+
+The idea is that someone who never opens Phoenix can still see what retrieval
+did and why one chunk beat another.
+
 ## Running it
 
 With Docker (easiest):
@@ -189,6 +213,39 @@ The reranker adds no recall at all; what it buys is ordering, moving the right c
 up inside the top 5, for 97% of the retrieval latency. Write-up in
 [docs/experiments/retrieval-ablation.md](docs/experiments/retrieval-ablation.md).
 
+## Latency and cost
+
+From `reports/latency.json` (`python eval/latency.py`, which runs
+retrieval-only and free by default). Warm process, 104 questions, M-series Mac:
+
+| stage | p50 | p95 |
+| --- | --- | --- |
+| dense search | 5.9 ms | 13.2 ms |
+| BM25 search | 0.8 ms | 1.3 ms |
+| fusion | 0.0 ms | 0.0 ms |
+| **rerank** | **251.0 ms** | 280.4 ms |
+| retrieval total | 259.3 ms | 288.6 ms |
+
+**The cross-encoder is 97% of retrieval time.** Everything else — embedding the
+query, searching the vectors, scanning BM25, fusing two rankings — is under 7 ms
+combined.
+
+Put that next to the ablation: reranking adds *no recall*, only ordering. So
+almost all of retrieval's cost goes on moving the right chunk higher within a
+top-5 that already contained it. The depth sweep says reranking 10 candidates
+instead of all of them is about 3x faster for no measured loss, which is the
+obvious thing to change next.
+
+Cold start is 20 seconds, nearly all of it loading the two models. That is why
+the API loads them at startup instead of on the first request, and why a
+scale-to-zero host was the wrong shape for this.
+
+Generation dominates end to end by two orders of magnitude over retrieval, and
+cost comes from the provider's own token counts rather than an estimate —
+prices live in `data/pricing.json` with the date I last checked them, and a
+model that isn't listed produces a null cost rather than a zero. Write-up in
+[docs/experiments/latency-and-cost.md](docs/experiments/latency-and-cost.md).
+
 ## The CI check
 
 Two workflows. `.github/workflows/ci.yml` needs no secrets, so it runs on pull
@@ -243,13 +300,13 @@ measure are labeled as guesses rather than dressed up:
 
 ```
 src/observable_rag/
-  ingest/         fetch + chunk the docs (stable IDs)
+  ingest/         fetch + chunk the docs (stable IDs) + integrity manifest
   index/          vector index (Qdrant) + BM25 index
-  retrieve/       RRF fusion + cross-encoder rerank
-  generate/       LLM client + citation-enforced answering
-  observability/  Phoenix tracing
-  api/            FastAPI /ask endpoint
-eval/             the eval harness, the CI gate, the retrieval ablation
+  retrieve/       RRF fusion + cross-encoder rerank + per-stage trace
+  generate/       LLM client, citation-enforced answering, token accounting
+  observability/  Phoenix tracing (off unless an endpoint is configured)
+  api/            FastAPI app, rate limits, and the demo page
+eval/             the eval harness, the CI gate, the ablation, latency + cost
 tests/            run with pytest
 scripts/          drafting, review and judge-calibration tools
 reports/          every number in this README comes from a file in here
@@ -270,5 +327,13 @@ docs/             evaluation method, experiment write-ups, ADRs
 - The judge isn't calibrated against human labels yet. `scripts/calibrate_judge.py`
   samples answers and computes agreement and Cohen's kappa, but I haven't done the
   labeling, so faithfulness and citation precision are an unchecked second opinion.
-- This is a portfolio project, not a product: one corpus, no auth, no real
-  deployment.
+- The demo config is the eval config. Same provider, same model, same corpus —
+  so the numbers above describe the thing you can actually try, not a different
+  setup that happened to score better.
+- It has been deployed and taken down again rather than left running: a single
+  `t4g.small` in Mumbai, image and index baked in, behind per-IP and global
+  rate limits. `scripts/deploy.sh plan` shows what it would create without
+  creating it. Reasoning in
+  [docs/adr/0006-deploy-to-a-single-ec2-instance.md](docs/adr/0006-deploy-to-a-single-ec2-instance.md).
+- This is a portfolio project, not a product: one corpus, no auth, one instance
+  with no redundancy.
