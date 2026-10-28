@@ -240,10 +240,15 @@ Cold start is 20 seconds, nearly all of it loading the two models. That is why
 the API loads them at startup instead of on the first request, and why a
 scale-to-zero host was the wrong shape for this.
 
-Generation dominates end to end by two orders of magnitude over retrieval, and
-cost comes from the provider's own token counts rather than an estimate —
-prices live in `data/pricing.json` with the date I last checked them, and a
-model that isn't listed produces a null cost rather than a zero. Write-up in
+Generation is the other 98%: 13.2 s p50 against 259 ms of retrieval, with a
+wide tail (31 s at p95, 52 s worst). That is the provider, not the pipeline.
+
+Cost comes from the provider's own token counts rather than an estimate — a
+query costs $0.001073 on average, $0.00219 at p95, and the full 104-question
+eval run came to $0.11. Prices live in `data/pricing.json` with the date I last
+checked them, and a model that isn't listed produces a null cost rather than a
+zero. `gpt-5-nano` is a reasoning model, so over half those tokens are
+reasoning the reader never sees. Write-up in
 [docs/experiments/latency-and-cost.md](docs/experiments/latency-and-cost.md).
 
 ## The CI check

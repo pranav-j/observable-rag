@@ -53,18 +53,37 @@ question. It is also why a scale-to-zero host was rejected — see
 
 ## Generation and cost
 
-Filled in from the `--with-llm` run; see `reports/latency.json` for the
-authoritative numbers.
+104 questions through the full pipeline, `gpt-5-nano` generating:
 
-The generator dominates end-to-end latency by two orders of magnitude over
-retrieval. Note that `gpt-5-nano` is a reasoning model, so completion tokens
-include reasoning the reader never sees — a single query measured 2,286 prompt
-tokens against 2,462 completion tokens, which is why generation is slow and why
-output price matters more than input price here.
+| | p50 | p95 | max |
+| --- | --- | --- | --- |
+| `generate` | 13.2 s | 30.5 s | 51.8 s |
+| end to end | 13.6 s | 31.0 s | 52.1 s |
+| tokens per query | 4,810 | 8,009 | 11,056 |
+| cost per query | $0.000936 | $0.002190 | $0.003354 |
+
+Mean cost $0.001073; the whole 104-question run cost **$0.1116**.
+
+**Generation is 98% of end-to-end time** — 13.2 s against 259 ms of retrieval,
+a factor of fifty. Any latency work that isn't about the model call is
+rearranging deck chairs, which is the real reason the CI gate no longer tries
+to hold end-to-end p95 to a tight margin.
+
+The spread is wide: p95 is 2.3x p50 and the worst query took 52 seconds. That
+is the provider, not the pipeline, and it is why four runs of identical code
+produced p95 figures between 30 s and 43 s.
+
+`gpt-5-nano` is a reasoning model, so completion tokens include reasoning the
+reader never sees. One sampled query spent 2,286 prompt tokens against 2,462
+completion tokens — more than half the bill on text nobody reads, and the
+reason output pricing dominates here despite a 2,600-token retrieved context.
 
 Prices live in `data/pricing.json` with the date they were checked. A model
 missing from that file produces a **null** cost rather than a zero, so an
-unpriced call can't quietly understate a total.
+unpriced call cannot quietly understate a total. The report also stores every
+per-query cost, so a percentile can be recomputed without paying for the run
+again — which mattered, because the first version of this report printed a p95
+of $0.000000 after reusing a percentile helper that rounds to two decimals.
 
 ## Limitations
 
