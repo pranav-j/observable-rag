@@ -1,42 +1,33 @@
+# The image is self-contained: models, corpus and both indexes are built at
+# image build time and Qdrant runs embedded inside the container. So this is
+# just "run it" -- no separate database, no index-building service, and no
+# volumes.
+#
+# It used to mount a named volume over /app/data and run a one-shot service to
+# populate it against a Qdrant server. That now hides the index baked into the
+# image, which is also the only one the container can reach, and the mounted
+# paths are root-owned while the app runs as uid 10001.
 services:
-  qdrant:
-    image: qdrant/qdrant:latest
-    volumes:
-      - qdrant-storage:/qdrant/storage
-    ports:
-      - "6333:6333"          # optional, for poking at Qdrant directly
-
-  # one-shot: fetch corpus, chunk, populate Qdrant + write bm25/chunks to the shared volume
-  build:
-    build: .
-    command: python -m observable_rag.index.build
-    depends_on:
-      - qdrant
-    environment:
-      QDRANT_URL: http://qdrant:6333
-    volumes:
-      - app-data:/app/data
-      - hf-cache:/root/.cache/huggingface
-
   api:
-    build: .
-    depends_on:
-      qdrant:
-        condition: service_started
-      build:
-        condition: service_completed_successfully   # serve only after the index exists
+    build:
+      context: .
+      args:
+        # Pinned: chunk ids are the contract the golden set is written against.
+        FASTAPI_REF: ${FASTAPI_REF:-0.159.1}
     ports:
       - "8000:8000"
     environment:
-      QDRANT_URL: http://qdrant:6333
       LLM_PROVIDER: ${LLM_PROVIDER:-openai}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
-    volumes:
-      - app-data:/app/data
-      - hf-cache:/root/.cache/huggingface
-
-volumes:
-  qdrant-storage:
-  app-data:
-  hf-cache:
+      JUDGE_MODEL: ${JUDGE_MODEL:-}
+      # Spend protection. The defaults in limits.py are the same, but being
+      # explicit here means you see them before exposing the port.
+      RATE_PER_MINUTE: ${RATE_PER_MINUTE:-5}
+      RATE_PER_DAY: ${RATE_PER_DAY:-30}
+      GLOBAL_PER_DAY: ${GLOBAL_PER_DAY:-500}
+      # Tracing stays off unless a collector is actually listening -- pointing
+      # it at one that isn't blocks the request path. Run Phoenix and set this
+      # to http://host.docker.internal:4317 to turn it on.
+      PHOENIX_COLLECTOR_ENDPOINT: ${PHOENIX_COLLECTOR_ENDPOINT:-}
+    restart: unless-stopped

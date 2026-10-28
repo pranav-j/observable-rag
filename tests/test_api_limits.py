@@ -209,3 +209,27 @@ def test_ask_returns_the_trace_the_panel_needs(monkeypatch):
     assert src["cited"] is True                 # the answer actually used it
     assert src["found_by"] == "both"            # dense and bm25 both surfaced it
     assert src["url"] == "https://ex.test/a"    # links back to a readable page
+
+
+def test_the_eagerly_loaded_pipeline_also_traces(monkeypatch):
+    """The startup path and get_pipeline() build the same object. They didn't:
+    startup made one without tracing and won, so the demo panel was empty while
+    every test that skipped eager loading passed."""
+    built = {}
+
+    class _Pipe:
+        def __init__(self, **kw):
+            built.update(kw)
+
+        def _retrieve(self, *a, **kw):
+            return []
+
+        def answer(self, q):
+            raise AssertionError("not called")
+
+    monkeypatch.setenv("EAGER_LOAD", "1")
+    monkeypatch.setattr(api, "_pipeline", None)
+    monkeypatch.setattr(api, "RagPipeline", _Pipe)
+    with TestClient(api.app):
+        pass
+    assert built.get("with_trace") is True

@@ -52,7 +52,11 @@ async def lifespan(app: "FastAPI"):
         # Load the models and index now, so the first visitor doesn't wait for
         # them. Cheap insurance: it turns a slow first request into a slow
         # start, which only the deploy sees.
-        _pipeline = RagPipeline()
+        # Must match get_pipeline(): this one wins, because get_pipeline only
+        # builds a pipeline when there isn't one. Constructing it without
+        # with_trace here left the demo panel empty while every test that
+        # skipped eager loading passed.
+        _pipeline = RagPipeline(with_trace=True)
         try:
             _pipeline._retrieve("warmup", top_n=1)
         except Exception as e:  # noqa: BLE001
