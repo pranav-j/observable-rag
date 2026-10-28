@@ -38,8 +38,13 @@ PROVIDERS = {
 DEFAULT_PROVIDER = "openai"
 
 
-def _chat_completer(client, model: str):
-    """Wrap an OpenAI-style client into complete(messages) -> str."""
+def _chat_completer(client, model: str, recorder=None):
+    """Wrap an OpenAI-style client into complete(messages) -> str.
+
+    Token usage is recorded off each response when a recorder is given, so cost
+    is measured from what the provider actually billed rather than estimated
+    from a local token count.
+    """
     supports_temperature = {"ok": True}
 
     def complete(messages: list[dict]) -> str:
@@ -54,29 +59,35 @@ def _chat_completer(client, model: str):
                 resp = client.chat.completions.create(model=model, messages=messages)
             else:
                 raise
+        if recorder is not None:
+            from .usage import extract_usage
+            recorder.record(extract_usage(resp, model))
         return resp.choices[0].message.content or ""
 
     return complete
 
 
-def _load_openai_llm():
+def _load_openai_llm(recorder=None):
     from openai import OpenAI
-    return _chat_completer(OpenAI(), os.getenv("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL)
+    return _chat_completer(OpenAI(), os.getenv("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL,
+                           recorder)
 
 
-def _load_gemini_llm():
+def _load_gemini_llm(recorder=None):
     from openai import OpenAI  # Gemini via its OpenAI-compatible endpoint
     client = OpenAI(api_key=os.environ.get("GEMINI_API_KEY"), base_url=GEMINI_BASE_URL)
-    return _chat_completer(client, os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL)
+    return _chat_completer(client, os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL,
+                           recorder)
 
 
-def _load_groq_llm():
+def _load_groq_llm(recorder=None):
     from openai import OpenAI  # Groq via its OpenAI-compatible endpoint
     client = OpenAI(api_key=os.environ.get("GROQ_API_KEY"), base_url=GROQ_BASE_URL)
-    return _chat_completer(client, os.getenv("GROQ_MODEL") or DEFAULT_GROQ_MODEL)
+    return _chat_completer(client, os.getenv("GROQ_MODEL") or DEFAULT_GROQ_MODEL,
+                           recorder)
 
 
-def _load_default_llm():
+def _load_default_llm(recorder=None):
     loaders = {
         "openai": _load_openai_llm,
         "gemini": _load_gemini_llm,
@@ -85,7 +96,7 @@ def _load_default_llm():
     provider = (os.getenv("LLM_PROVIDER") or DEFAULT_PROVIDER).lower()
     if provider not in loaders:
         raise ValueError(f"unknown LLM_PROVIDER: {provider!r} (use openai, gemini, or groq)")
-    return loaders[provider]()
+    return loaders[provider](recorder)
 
 
 # --- role-aware resolution (generation vs judge) ----------------------------

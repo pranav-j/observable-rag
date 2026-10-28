@@ -16,6 +16,7 @@ from ..observability.tracing import span
 from ..retrieve.hybrid import retrieve as hybrid_retrieve
 from .llm import _load_default_llm  # re-exported for scripts/make_golden.py
 from .prompt import ABSTAIN_MESSAGE, build_messages
+from .usage import UsageRecorder
 
 # Any bracketed token is a citation ATTEMPT; only ones matching source#<int>
 # AND naming a retrieved chunk count as real. The model invents plausible-looking
@@ -34,6 +35,10 @@ class RagOutput:
     citations: list[str] = field(default_factory=list)
     invalid_citations: list[str] = field(default_factory=list)
     contradictory: bool = False
+    # What retrieval did, and what the call cost. Both None unless asked for --
+    # the eval doesn't need them per item and they are large.
+    trace: object | None = None
+    usage: dict | None = None
 
 
 def _is_abstention(text: str) -> bool:
@@ -88,6 +93,12 @@ def _is_contradictory(text: str, citations: list[str]) -> bool:
     return len(tail) > _CONTRADICTION_CHARS and bool(citations)
 
 
+def _usage_for(calls, generate_ms: float) -> dict:
+    """Cost of the calls this request made, not the process total."""
+    rec = UsageRecorder(calls=list(calls))
+    return {**rec.summary(), "generate_ms": round(generate_ms, 1)}
+
+
 def _parse_citations(answer: str, valid: set[str]) -> tuple[list[str], list[str]]:
     """Split the answer's citation attempts into (resolved, fabricated)."""
     good: list[str] = []
@@ -100,21 +111,35 @@ def _parse_citations(answer: str, valid: set[str]) -> tuple[list[str], list[str]
 
 
 class RagPipeline:
-    def __init__(self, complete=None, retrieve=None, top_n: int = 5):
+    def __init__(self, complete=None, retrieve=None, top_n: int = 5,
+                 with_trace: bool = False):
         self._complete = complete
         self._retrieve = retrieve or hybrid_retrieve
         self.top_n = top_n
+        self.with_trace = with_trace
+        # Per-pipeline, so the demo can report the cost of one request rather
+        # than a running total for the process.
+        self.usage = UsageRecorder()
 
     @property
     def complete(self):
         if self._complete is None:
-            self._complete = _load_default_llm()
+            self._complete = _load_default_llm(self.usage)
         return self._complete
 
     def answer(self, question: str) -> RagOutput:
         with span("rag_pipeline", **{"input.value": question}) as sp:
             t0 = time.perf_counter()
-            chunks = self._retrieve(question, top_n=self.top_n)
+            before = len(self.usage.calls)
+            trace = None
+            if self.with_trace:
+                # Shape-checked rather than wrapped in try/except TypeError: a
+                # genuine TypeError from inside retrieval should surface, not be
+                # mistaken for "this retriever doesn't do traces".
+                got = self._retrieve(question, top_n=self.top_n, with_trace=True)
+                chunks, trace = got if isinstance(got, tuple) else (got, None)
+            else:
+                chunks = self._retrieve(question, top_n=self.top_n)
             if not chunks:
                 sp.set_attribute("output.abstained", True)
                 return RagOutput(
@@ -122,7 +147,9 @@ class RagPipeline:
                     abstained=True, latency_ms=(time.perf_counter() - t0) * 1000,
                     citations=[])
             with span("generate"):
+                t_gen = time.perf_counter()
                 text = self.complete(build_messages(question, chunks))
+                generate_ms = (time.perf_counter() - t_gen) * 1000
             ids = [c.id for c in chunks]
             cited, fabricated = _parse_citations(text, set(ids))
             contradictory = _is_contradictory(text, cited)
@@ -135,6 +162,9 @@ class RagPipeline:
                 citations=cited,
                 invalid_citations=fabricated,
                 contradictory=contradictory,
+                trace=trace,
+                usage=(_usage_for(self.usage.calls[before:], generate_ms)
+                       if self.with_trace else None),
             )
             sp.set_attribute("output.abstained", out.abstained)
             sp.set_attribute("output.citations", ", ".join(out.citations))

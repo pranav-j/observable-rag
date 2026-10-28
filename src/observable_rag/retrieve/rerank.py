@@ -40,9 +40,19 @@ class CrossEncoderReranker:
             self._score = _load_default_scorer()
         return self._score
 
-    def rerank(self, query: str, chunks: list[Chunk], top_n: int) -> list[Chunk]:
+    def rerank_scored(self, query: str, chunks: list[Chunk],
+                      top_n: int) -> list[tuple[Chunk, float]]:
+        """Top chunks WITH their cross-encoder scores.
+
+        The score is the only signal that says how confident the precision stage
+        was, and it was being thrown away on truncation -- so a low-confidence
+        top hit looked identical to a certain one.
+        """
         if not chunks:
             return []
         scores = self.score(query, [c.text for c in chunks])
         ranked = sorted(zip(chunks, scores), key=lambda pair: pair[1], reverse=True)
-        return [chunk for chunk, _ in ranked[:top_n]]
+        return [(chunk, float(score)) for chunk, score in ranked[:top_n]]
+
+    def rerank(self, query: str, chunks: list[Chunk], top_n: int) -> list[Chunk]:
+        return [chunk for chunk, _ in self.rerank_scored(query, chunks, top_n)]

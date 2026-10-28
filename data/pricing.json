@@ -1,0 +1,11 @@
+{
+  "_comment": "USD per 1M tokens. Prices are not discoverable from the API, so they live here and are typed by hand -- check them against the provider's page before trusting a cost report. A model missing from this file yields a null cost rather than a wrong one.",
+  "_checked": "2026-10-28",
+  "models": {
+    "gpt-5-nano":   {"input_per_1m": 0.05,  "output_per_1m": 0.40},
+    "gpt-5-mini":   {"input_per_1m": 0.25,  "output_per_1m": 2.00},
+    "gpt-4o-mini":  {"input_per_1m": 0.15,  "output_per_1m": 0.60},
+    "gpt-4.1-mini": {"input_per_1m": 0.40,  "output_per_1m": 1.60},
+    "gpt-4o":       {"input_per_1m": 2.50,  "output_per_1m": 10.00}
+  }
+}
