@@ -12,9 +12,11 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..generate.answer import RagPipeline
@@ -62,12 +64,39 @@ async def lifespan(app: "FastAPI"):
 
 app = FastAPI(title="observable-rag", lifespan=lifespan)
 
+STATIC = Path(__file__).parent / "static"
+
+
+@app.get("/", include_in_schema=False)
+def index() -> FileResponse:
+    """The demo page. One static file, no build step."""
+    return FileResponse(STATIC / "index.html")
+
+
+if STATIC.is_dir():
+    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
 
 def get_pipeline() -> RagPipeline:
     global _pipeline
     if _pipeline is None:
-        _pipeline = RagPipeline()
+        # with_trace: the demo's whole point is showing what retrieval did.
+        _pipeline = RagPipeline(with_trace=True)
     return _pipeline
+
+
+# The docs this corpus was built from, so a citation can link back to the page
+# a reader can actually open. Pinned to the same revision as the index.
+DOCS_BASE = "https://fastapi.tiangolo.com/"
+
+EXAMPLES = [
+    "How do I declare a dependency with Depends?",
+    "What does status_code do on a path operation decorator?",
+    "How do I share setup code between endpoints?",
+    "How do I return a custom response class for one route?",
+    # One the docs genuinely don't cover, so a visitor sees it decline.
+    "Does FastAPI include a built-in distributed rate limiter?",
+]
 
 
 class AskRequest(BaseModel):
@@ -78,6 +107,13 @@ class AskResponse(BaseModel):
     answer: str
     citations: list[str]
     abstained: bool
+    # Everything below is what makes the demo observable without Phoenix.
+    invalid_citations: list[str] = []
+    contradictory: bool = False
+    latency_ms: float | None = None
+    trace: dict | None = None
+    usage: dict | None = None
+    sources: list[dict] = []
 
 
 def _client_hash(request: Request) -> str:
@@ -86,6 +122,12 @@ def _client_hash(request: Request) -> str:
     ip = forwarded.split(",")[0].strip() if forwarded else (
         request.client.host if request.client else "unknown")
     return hash_ip(ip)
+
+
+@app.get("/examples")
+def examples() -> dict:
+    """Questions worth trying, including one the docs don't answer."""
+    return {"examples": EXAMPLES}
 
 
 @app.get("/health")
@@ -124,7 +166,36 @@ def ask(req: AskRequest, request: Request):
 
     _limiter.record(who)
     out = get_pipeline().answer(req.question)
-    log.info("answered ip=%s chars=%d abstained=%s citations=%d",
-             who, len(req.question), out.abstained, len(out.citations))
-    return AskResponse(answer=out.answer, citations=out.citations,
-                       abstained=out.abstained)
+    log.info("answered ip=%s chars=%d abstained=%s citations=%d cost=%s",
+             who, len(req.question), out.abstained, len(out.citations),
+             (out.usage or {}).get("cost_usd"))
+
+    trace = out.trace.to_dict() if out.trace is not None else None
+    return AskResponse(
+        answer=out.answer,
+        citations=out.citations,
+        abstained=out.abstained,
+        invalid_citations=out.invalid_citations,
+        contradictory=out.contradictory,
+        latency_ms=round(out.latency_ms, 1) if out.latency_ms else None,
+        trace=trace,
+        usage=out.usage,
+        sources=_sources(out, trace),
+    )
+
+
+def _sources(out, trace: "dict | None") -> list[dict]:
+    """The chunks shown to the model, each with a link to the page it came from
+    and whether the answer actually cited it."""
+    rows = []
+    for c in (trace or {}).get("chunks", []):
+        if c.get("final_rank") is None:
+            continue
+        rows.append({
+            "chunk_id": c["chunk_id"],
+            "url": c["url"] or DOCS_BASE,
+            "cited": c["chunk_id"] in out.citations,
+            "found_by": c["found_by"],
+            "rerank_score": c["rerank_score"],
+        })
+    return rows

@@ -155,3 +155,57 @@ def test_forwarded_header_identifies_the_visitor_behind_a_proxy(client):
     # a different forwarded address is a different visitor
     assert client.post("/ask", json={"question": "q"},
                        headers={"x-forwarded-for": "203.0.113.10"}).status_code == 200
+
+
+# --- the demo page ----------------------------------------------------------
+
+def test_the_page_is_served_at_the_root(client):
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "Ask the FastAPI docs" in r.text
+
+
+def test_examples_include_one_the_docs_do_not_cover(client):
+    """A demo that only shows successes hides the interesting behaviour."""
+    ex = client.get("/examples").json()["examples"]
+    assert len(ex) >= 4
+    assert any("rate limiter" in q.lower() for q in ex)
+
+
+def test_ask_returns_the_trace_the_panel_needs(monkeypatch):
+    from observable_rag.generate.answer import RagOutput
+    from observable_rag.retrieve.trace import ChunkTrace, RetrievalTrace
+
+    trace = RetrievalTrace(query="q", stages_ms={"dense_search": 9.0, "rerank": 80.0},
+                           n_dense=20, n_bm25=20, n_fused=31, n_reranked=31)
+    trace.chunks = [ChunkTrace(chunk_id="a#0", source="a", url="https://ex.test/a",
+                               dense_rank=1, dense_score=0.9, bm25_rank=3,
+                               bm25_score=4.1, rrf_score=0.03, fused_rank=1,
+                               rerank_score=7.2, final_rank=1)]
+
+    class _Fake:
+        def answer(self, question):
+            return RagOutput(answer="Yes [a#0].", retrieved_chunk_ids=["a#0"],
+                             contexts=["ctx"], citations=["a#0"], latency_ms=1234.0,
+                             trace=trace,
+                             usage={"total_tokens": 900, "cost_usd": 0.0001,
+                                    "generate_ms": 1100.0})
+
+    monkeypatch.setenv("EAGER_LOAD", "0")
+    monkeypatch.setattr(api, "_pipeline", _Fake())
+    monkeypatch.setattr(api, "_limiter", RateLimiter(per_minute=9, per_day=99,
+                                                     global_per_day=99, clock=_Clock()))
+    with TestClient(api.app) as c:
+        d = c.post("/ask", json={"question": "q"}).json()
+
+    assert d["trace"]["stages_ms"]["rerank"] == 80.0
+    assert d["trace"]["counts"] == {"dense": 20, "bm25": 20, "fused": 31, "reranked": 31}
+    assert d["usage"]["cost_usd"] == 0.0001
+    assert d["latency_ms"] == 1234.0
+
+    src = d["sources"][0]
+    assert src["chunk_id"] == "a#0"
+    assert src["cited"] is True                 # the answer actually used it
+    assert src["found_by"] == "both"            # dense and bm25 both surfaced it
+    assert src["url"] == "https://ex.test/a"    # links back to a readable page
