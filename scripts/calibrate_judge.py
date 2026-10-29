@@ -10,11 +10,15 @@ and reports how often the judge agreed.
     python scripts/calibrate_judge.py label        # you label them
     python scripts/calibrate_judge.py report       # agreement + Cohen's kappa
 
-The sample is stratified by qtype AND by judge score, because a judge that
-scores 0.99 almost everywhere produces a sample with no disagreement in it, and
-an agreement number computed from that means nothing.
+The sample is drawn by RISK, assessed from retrieval and citation facts and
+never from the judge's own score. Stratifying on the judge was tried first and
+failed: it scored 39 of 40 sampled answers at exactly 1.0, so the sample was
+thirty-nine foregone agreements, and kappa over a near-constant rater is ~0
+whatever the human says.
 
-Only you set the human labels. Nothing here writes one on your behalf.
+Only you set the human labels. Nothing here writes one on your behalf, and the
+judge's scores stay hidden until after you decide -- an opinion shown first is
+an opinion you partly adopt, and agreement is the thing being measured.
 """
 
 from __future__ import annotations
@@ -90,28 +94,70 @@ def _score_band(score: "float | None") -> str:
     return "high" if score >= 0.9 else ("mid" if score >= 0.5 else "low")
 
 
-def stratified_sample(items: list[dict], n: int, seed: int = 0) -> list[dict]:
-    """Spread the sample across (qtype, judge-score band) strata, round-robin.
+def risk_reasons(item: dict) -> list[str]:
+    """Why this answer might be unfaithful, judged WITHOUT the judge.
 
-    Round-robin rather than proportional: proportional sampling of a set where
-    95% of answers score 0.99 just reproduces that imbalance, and the rare low
-    scores are exactly the ones worth checking.
+    Stratifying on the judge's own score failed: it scored 39 of 40 sampled
+    answers at exactly 1.0, so the sample was 39 near-certain agreements and
+    kappa over a near-constant rater is ~0 no matter what the human says.
+
+    These signals are independent of the judge, so a sample built from them can
+    actually contain disagreement:
+
+      retrieval_missed  the labelled chunk never made the top k, so whatever
+                        the answer is built on, it isn't the ground truth
+      answered_unanswerable  the docs don't cover it and it answered anyway
+      near_miss         the question is adjacent to the chunk, not answered by it
+      invalid_citations the model emitted a tag that resolves to nothing
+      multi_citation    more citations, more chances one is unsupported
+    """
+    reasons = []
+    if item.get("answerable") and item.get("recall") == 0.0:
+        reasons.append("retrieval_missed")
+    if not item.get("answerable") and not item.get("abstained"):
+        reasons.append("answered_unanswerable")
+    if item.get("qtype") == "near_miss":
+        reasons.append("near_miss")
+    if item.get("invalid_citations"):
+        reasons.append("invalid_citations")
+    if len(item.get("citations") or []) > 1:
+        reasons.append("multi_citation")
+    return reasons
+
+
+def stratified_sample(items: list[dict], n: int, seed: int = 0) -> list[dict]:
+    """Risky answers first, then a spread across categories.
+
+    Risk is assessed from retrieval and citation facts, never from the judge's
+    score -- seeding the sample with the judge's opinion is how you end up
+    measuring whether a human agrees with the cases the judge already found
+    easy.
     """
     graded = [it for it in items if not it.get("abstained") and it.get("answer", "").strip()]
-    strata: dict[tuple, list[dict]] = defaultdict(list)
-    for it in graded:
-        strata[(it.get("qtype", "factual"), _score_band(it.get("faithfulness")))].append(it)
+    # unanswerable items that got answered aren't "graded" by the judge but are
+    # exactly the ones worth a human read
+    graded += [it for it in items
+               if not it.get("answerable") and not it.get("abstained")
+               and it not in graded]
 
     rng = random.Random(seed)
-    for bucket in strata.values():
-        rng.shuffle(bucket)
+    rng.shuffle(graded)
 
-    picked: list[dict] = []
-    keys = sorted(strata, key=lambda k: (k[1] != "low", k[1] != "mid", k))
-    while len(picked) < n and any(strata[k] for k in keys):
-        for key in keys:
-            if strata[key] and len(picked) < n:
-                picked.append(strata[key].pop())
+    risky = [it for it in graded if risk_reasons(it)]
+    risky.sort(key=lambda it: -len(risk_reasons(it)))
+    picked = risky[:n]
+
+    # fill the rest round-robin across categories so no one qtype dominates
+    if len(picked) < n:
+        rest: dict[str, list[dict]] = defaultdict(list)
+        for it in graded:
+            if it not in picked:
+                rest[it.get("qtype", "factual")].append(it)
+        keys = sorted(rest)
+        while len(picked) < n and any(rest[k] for k in keys):
+            for k in keys:
+                if rest[k] and len(picked) < n:
+                    picked.append(rest[k].pop())
     return picked
 
 
@@ -120,11 +166,13 @@ def build_sample(items: list[dict], n: int, seed: int) -> list[dict]:
     for it in stratified_sample(items, n, seed):
         rows.append({
             "id": it["id"],
-            "qtype": it.get("qtype"),
             "question": it["question"],
             "answer": it["answer"],
             "contexts": it.get("contexts", []),
             "citations": it.get("citations", []),
+            "qtype": it.get("qtype"),
+            "answerable": it.get("answerable", True),
+            "risk": risk_reasons(it),
             "judge_faithfulness": it.get("faithfulness"),
             "judge_citation_precision": it.get("citation_precision"),
             # filled in by you, never by the tool
@@ -172,8 +220,9 @@ def label(rows: list[dict], path: Path) -> int:
     done = 0
     for i, row in enumerate(todo, start=1):
         print(f"\n{BOLD}{'─' * 88}{RESET}")
+        why = ", ".join(row.get("risk") or []) or "sampled for coverage"
         print(f"{BOLD}[{i}/{len(todo)}]{RESET} {DIM}{row['id']}{RESET} "
-              f"{YELLOW}{row['qtype']}{RESET}")
+              f"{YELLOW}{row['qtype']}{RESET}  {DIM}({why}){RESET}")
         print(f"\n{BOLD}Q:{RESET} {_wrap(row['question'])}")
         print(f"\n{BOLD}ANSWER:{RESET}\n{_wrap(row['answer'])}")
         print(f"\n{BOLD}SOURCES SHOWN TO THE MODEL:{RESET}")

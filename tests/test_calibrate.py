@@ -84,26 +84,57 @@ def test_report_handles_a_sample_with_no_labels():
 
 # --- sampling ----------------------------------------------------------------
 
-def _item(rid, qtype, faith, abstained=False):
+def _item(rid, qtype, faith, abstained=False, recall=1.0, answerable=True,
+          citations=None, invalid=None):
     return {"id": rid, "qtype": qtype, "question": "q", "answer": "a",
             "abstained": abstained, "faithfulness": faith, "contexts": [],
-            "citations": [], "citation_precision": None}
+            "citations": citations or [], "citation_precision": None,
+            "recall": recall, "answerable": answerable,
+            "invalid_citations": invalid or []}
 
 
-def test_sample_reaches_for_low_scores_first():
-    """19 near-perfect answers and one bad one: the bad one must be in a sample
-    of 5, or the agreement number is computed from unanimous rows."""
-    items = [_item(f"q{i}", "factual", 0.99) for i in range(19)]
-    items.append(_item("bad", "factual", 0.1))
+def test_sample_prefers_answers_retrieval_got_wrong():
+    """The judge scores almost everything 1.0, so stratifying on its score gave
+    forty near-certain agreements. Risk is judged from retrieval facts instead:
+    an answer whose labelled chunk never made the top k is built on something
+    other than the ground truth, and is where disagreement actually lives."""
+    items = [_item(f"q{i}", "factual", 1.0) for i in range(19)]
+    items.append(_item("missed", "factual", 1.0, recall=0.0))
     picked = {r["id"] for r in stratified_sample(items, 5)}
-    assert "bad" in picked
+    assert "missed" in picked
 
 
-def test_sample_spreads_across_qtypes():
-    items = ([_item(f"f{i}", "factual", 0.99) for i in range(10)] +
-             [_item("m1", "multi_hop", 0.99), _item("n1", "near_miss", 0.99)])
+def test_risk_is_assessed_without_looking_at_the_judge():
+    from calibrate_judge import risk_reasons
+    # identical answers, opposite judge scores -> identical risk
+    good = _item("a", "factual", 1.0, recall=0.0)
+    bad = _item("b", "factual", 0.0, recall=0.0)
+    assert risk_reasons(good) == risk_reasons(bad) == ["retrieval_missed"]
+
+
+def test_an_answered_unanswerable_is_always_worth_a_look():
+    from calibrate_judge import risk_reasons
+    it = _item("u", "unanswerable_in_domain", None, answerable=False)
+    assert "answered_unanswerable" in risk_reasons(it)
+    assert "u" in {r["id"] for r in stratified_sample([it], 5)}
+
+
+def test_fabricated_citations_and_multiple_citations_raise_risk():
+    from calibrate_judge import risk_reasons
+    assert "invalid_citations" in risk_reasons(
+        _item("x", "factual", 1.0, invalid=["ghost#9"]))
+    assert "multi_citation" in risk_reasons(
+        _item("y", "factual", 1.0, citations=["a#0", "b#0"]))
+    assert risk_reasons(_item("z", "factual", 1.0, citations=["a#0"])) == []
+
+
+def test_sample_spreads_across_qtypes_once_risk_is_exhausted():
+    """With no risky answers left, fill round-robin so one category can't
+    dominate the sample."""
+    items = ([_item(f"f{i}", "factual", 1.0) for i in range(10)] +
+             [_item("m1", "multi_hop", 1.0), _item("p1", "paraphrase", 1.0)])
     picked = {r["qtype"] for r in stratified_sample(items, 4)}
-    assert {"multi_hop", "near_miss"} <= picked
+    assert {"multi_hop", "paraphrase"} <= picked
 
 
 def test_abstentions_are_not_sampled():
